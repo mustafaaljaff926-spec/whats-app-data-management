@@ -43,15 +43,24 @@ function applyRoleUI(){
   document.body.classList.toggle('role-editor', userRole !== 'viewer');
   const badge = document.getElementById('roleBadge');
   const logoutBtn = document.getElementById('logoutBtn');
-  if (badge && logoutBtn) {
-    if (authRequired) {
+  const logoutFooter = document.getElementById('logoutBtnFooter');
+  const footerSignin = document.getElementById('footerLinkSignin');
+  const footerSignup = document.getElementById('footerLinkSignup');
+  if (authRequired) {
+    if (badge) {
       badge.style.display = 'inline-block';
-      logoutBtn.style.display = 'inline-block';
       badge.textContent = userRole === 'viewer' ? 'Viewer' : 'Editor';
-    } else {
-      badge.style.display = 'none';
-      logoutBtn.style.display = 'none';
     }
+    if (logoutBtn) logoutBtn.style.display = 'inline-block';
+    if (logoutFooter) logoutFooter.style.display = 'inline-block';
+    if (footerSignin) footerSignin.classList.add('hidden');
+    if (footerSignup) footerSignup.classList.add('hidden');
+  } else {
+    if (badge) badge.style.display = 'none';
+    if (logoutBtn) logoutBtn.style.display = 'none';
+    if (logoutFooter) logoutFooter.style.display = 'none';
+    if (footerSignin) footerSignin.classList.remove('hidden');
+    if (footerSignup) footerSignup.classList.toggle('hidden', !signupEnabledState);
   }
 }
 

@@ -2,11 +2,81 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Sign up — Banzeeni</title>
-  <meta http-equiv="refresh" content="0;url=/?auth=signup">
-  <script>location.replace('/?auth=signup');</script>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Create account — Banzeeni</title>
+  <link rel="stylesheet" href="styles.css">
 </head>
-<body>
-  <p>Redirecting to <a href="/?auth=signup">create account</a>…</p>
+<body data-auth-page="signup">
+  <div id="toastHost" class="toast-host" aria-live="polite" aria-relevant="additions"></div>
+
+  <div class="auth-screen">
+    <div class="auth-layout">
+      <div class="auth-brand-side">
+        <div class="auth-brand-mark">
+          <img src="https://r2.image-upload.app/tyImg/S2TBO8Nq.png" alt="">
+        </div>
+        <h1 class="auth-title">Banzeeni</h1>
+        <p class="auth-tagline">Create a viewer account — ask an admin for editor access if you need to enter orders.</p>
+      </div>
+      <div class="auth-forms-side">
+        <div id="authOpenOnly" class="auth-card hidden">
+          <h2 class="auth-heading">Sign-up unavailable</h2>
+          <p class="login-hint">This server does not require sign-in, or registration is not enabled.</p>
+          <a class="btn primary auth-submit" href="index.html" style="text-align:center;text-decoration:none;display:inline-block">Open app</a>
+        </div>
+
+        <div id="authPageMain">
+          <div id="signupDisabled" class="auth-card hidden">
+            <h2 class="auth-heading">Registration disabled</h2>
+            <p class="login-hint">Self-service signup is not enabled on this server.</p>
+            <a class="btn primary auth-submit" href="login.html" style="text-align:center;text-decoration:none;display:inline-block">Sign in</a>
+            <p class="login-hint" style="margin-top:14px"><a href="index.html">← Back to app</a></p>
+          </div>
+
+          <div id="signupCard" class="auth-card">
+            <h2 class="auth-heading">Create account</h2>
+            <p class="login-hint">New accounts are <strong>view-only</strong> until an admin promotes you.</p>
+            <div class="auth-field-group">
+              <label for="signupEmail">Email</label>
+              <input type="email" id="signupEmail" autocomplete="email" placeholder="you@company.com">
+            </div>
+            <div class="auth-field-group">
+              <label for="signupPassword">Password</label>
+              <input type="password" id="signupPassword" autocomplete="new-password" placeholder="At least 8 characters">
+            </div>
+            <div class="auth-field-group">
+              <label for="signupPassword2">Confirm password</label>
+              <input type="password" id="signupPassword2" autocomplete="new-password" placeholder="Repeat password">
+            </div>
+            <div class="auth-field-group">
+              <label for="signupCode">Signup code <span class="auth-optional">(if required)</span></label>
+              <input type="text" id="signupCode" autocomplete="off" placeholder="From your admin">
+            </div>
+            <button type="button" class="btn primary auth-submit" id="btnSignupSubmit" onclick="authPageSignup()">Create account</button>
+            <p id="signupError" class="login-error" style="display:none"></p>
+            <div class="auth-links" style="margin-top:12px;padding-top:0;border:none">
+              <a class="link-btn" href="login.html">Already have an account? Sign in</a>
+            </div>
+            <p class="login-hint" style="margin-top:14px"><a href="index.html">← Back to app</a></p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script src="auth-pages.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', function () {
+      try {
+        if (localStorage.getItem('fuel-orders-token')) {
+          fetch('/api/auth/status')
+            .then(function (r) { return r.json(); })
+            .then(function (st) {
+              if (st && st.authEnabled) location.replace(new URL('./index.html', location.href).href);
+            })
+            .catch(function () {});
+        }
+      } catch (e) {}
+    });
+  </script>
 </body>
 </html>

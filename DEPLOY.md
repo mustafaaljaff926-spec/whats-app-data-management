@@ -33,7 +33,7 @@ Sign up implies email login, so `ALLOW_USER_LOGIN` is effectively on when `ALLOW
 
 To **promote** a registered user to editor, in Atlas open the `users` collection and set `role` to `editor` for that document (or keep using shared `EDITOR_PASSWORD` for admins).
 
-**URLs:** `https://your-site/login.html` and `signup.html` redirect to the app; or open `/?auth=login` and `/?auth=signup`.
+**URLs:** Open **`login.html`** or **`signup.html`** for dedicated sign-in / sign-up pages (they store your session and send you to **`index.html`**). You can still use `/?auth=login` and `/?auth=signup` on the main app.
 
 ### Password reset (email accounts)
 
