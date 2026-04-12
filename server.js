@@ -7,6 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const rateLimit = require('express-rate-limit');
 const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
 
 let APP_VERSION = '2.0.0';
 try {
@@ -22,11 +23,17 @@ const BACKUP_DIR = path.join(__dirname, 'backups');
 let mongoCollection = null;
 let mongoClient = null;
 let auditCollection = null;
+let usersCollection = null;
 
 const AUTH_SECRET = process.env.AUTH_SECRET || '';
 const EDITOR_PW = process.env.EDITOR_PASSWORD || '';
 const VIEWER_PW = process.env.VIEWER_PASSWORD || '';
-const authEnabled = Boolean(AUTH_SECRET && (EDITOR_PW || VIEWER_PW));
+/** Self-serve signups (MongoDB). */
+const signupEnabledFlag = process.env.ALLOW_SIGNUP === '1' && !!process.env.MONGODB_URI;
+/** Email/password login: explicit flag or signups enabled (new users must log in). */
+const userLoginEnabledFlag =
+  !!process.env.MONGODB_URI && (process.env.ALLOW_USER_LOGIN === '1' || signupEnabledFlag);
+const authEnabled = Boolean(AUTH_SECRET && (EDITOR_PW || VIEWER_PW || userLoginEnabledFlag));
 const TOKEN_EXPIRY = process.env.AUTH_TOKEN_DAYS ? `${process.env.AUTH_TOKEN_DAYS}d` : '7d';
 
 app.set('trust proxy', 1);
@@ -67,7 +74,14 @@ app.get('/health', (req, res) => {
 });
 
 app.get('/api/auth/status', (req, res) => {
-  res.json({ authEnabled, version: APP_VERSION });
+  res.json({
+    authEnabled,
+    version: APP_VERSION,
+    signupEnabled: Boolean(signupEnabledFlag && usersCollection),
+    teamLoginEnabled: Boolean(EDITOR_PW || VIEWER_PW),
+    userLoginEnabled: Boolean(userLoginEnabledFlag && usersCollection),
+    openAccess: !authEnabled,
+  });
 });
 
 function parseOrderBody(raw) {
@@ -109,19 +123,66 @@ function orderBodyMiddleware(req, res, next) {
   next();
 }
 
-app.post('/api/auth/login', loginLimiter, (req, res) => {
-  if (!authEnabled) {
-    return res.status(400).json({ error: 'Authentication is not configured on this server' });
+app.post('/api/auth/login', loginLimiter, async (req, res) => {
+  try {
+    if (!authEnabled) {
+      return res.status(400).json({ error: 'Authentication is not configured on this server' });
+    }
+    const email = String(req.body.email || '').trim().toLowerCase();
+    const password = String(req.body.password || '');
+
+    if (!email) {
+      let role = null;
+      if (EDITOR_PW && password === EDITOR_PW) role = 'editor';
+      else if (VIEWER_PW && password === VIEWER_PW) role = 'viewer';
+      if (!role) return res.status(401).json({ error: 'Invalid credentials' });
+      const token = jwt.sign({ role, kind: 'team' }, AUTH_SECRET, { expiresIn: TOKEN_EXPIRY });
+      return res.json({ token, role });
+    }
+
+    if (!userLoginEnabledFlag || !usersCollection) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+    const user = await usersCollection.findOne({ email });
+    if (!user) return res.status(401).json({ error: 'Invalid credentials' });
+    const ok = await bcrypt.compare(password, user.passwordHash);
+    if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
+    const role = user.role === 'editor' ? 'editor' : 'viewer';
+    const token = jwt.sign({ role, kind: 'user', email }, AUTH_SECRET, { expiresIn: TOKEN_EXPIRY });
+    res.json({ token, role });
+  } catch (e) {
+    res.status(500).json({ error: 'Login failed' });
   }
-  const password = String(req.body.password || '');
-  let role = null;
-  if (EDITOR_PW && password === EDITOR_PW) role = 'editor';
-  else if (VIEWER_PW && password === VIEWER_PW) role = 'viewer';
-  if (!role) {
-    return res.status(401).json({ error: 'Invalid credentials' });
+});
+
+app.post('/api/auth/register', loginLimiter, async (req, res) => {
+  try {
+    if (!signupEnabledFlag || !usersCollection) {
+      return res.status(403).json({ error: 'Registration is disabled' });
+    }
+    const email = String(req.body.email || '').trim().toLowerCase();
+    const password = String(req.body.password || '');
+    const code = String(req.body.signupCode || '');
+    const needCode = process.env.SIGNUP_CODE || '';
+    if (needCode && code !== needCode) {
+      return res.status(403).json({ error: 'Invalid signup code' });
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ error: 'Invalid email' });
+    }
+    if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    const passwordHash = await bcrypt.hash(password, 10);
+    await usersCollection.insertOne({
+      email,
+      passwordHash,
+      role: 'viewer',
+      createdAt: new Date(),
+    });
+    res.json({ success: true });
+  } catch (e) {
+    if (e.code === 11000) return res.status(409).json({ error: 'Email already registered' });
+    res.status(500).json({ error: 'Could not register' });
   }
-  const token = jwt.sign({ role }, AUTH_SECRET, { expiresIn: TOKEN_EXPIRY });
-  res.json({ token, role });
 });
 
 function requireAuth(req, res, next) {
@@ -189,8 +250,10 @@ async function initMongo() {
   const dbName = process.env.MONGODB_DB || 'fuel_app';
   mongoCollection = mongoClient.db(dbName).collection('orders');
   auditCollection = mongoClient.db(dbName).collection('audit_log');
+  usersCollection = mongoClient.db(dbName).collection('users');
   await mongoCollection.createIndex({ id: 1 }, { unique: true });
   await auditCollection.createIndex({ ts: -1 });
+  await usersCollection.createIndex({ email: 1 }, { unique: true });
   console.log('Using MongoDB for order storage (online)');
 }
 
@@ -230,7 +293,8 @@ async function appendAudit(entry) {
 
 function actorLabel(req) {
   if (!authEnabled) return 'anonymous';
-  return req.user.role;
+  if (req.user && req.user.email) return req.user.email;
+  return req.user && req.user.role ? req.user.role : 'unknown';
 }
 
 function buildCsvRows(orders) {

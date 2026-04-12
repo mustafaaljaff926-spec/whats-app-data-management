@@ -18,6 +18,9 @@ let authToken=null;
 let userRole='editor';
 let authRequired=false;
 let fuelListenerHooked=false;
+let teamLoginEnabled=false;
+let userLoginEnabled=false;
+let signupEnabledState=false;
 
 function getStoredAuth(){
   authToken = localStorage.getItem(TOKEN_KEY);
@@ -51,27 +54,143 @@ function applyRoleUI(){
   }
 }
 
+function configureAuthPanels(st){
+  teamLoginEnabled = !!st.teamLoginEnabled;
+  userLoginEnabled = !!st.userLoginEnabled;
+  signupEnabledState = !!st.signupEnabled;
+  const userBlock = document.getElementById('authUserBlock');
+  const hint = document.getElementById('authLoginHint');
+  const linkSu = document.getElementById('linkToSignup');
+  const openHint = document.getElementById('authOpenHint');
+  if(openHint) openHint.classList.add('hidden');
+  if(userBlock){
+    userBlock.classList.toggle('hidden', !userLoginEnabled);
+    const em = document.getElementById('loginEmail');
+    if(em) em.required = !!(userLoginEnabled && !teamLoginEnabled);
+  }
+  if(hint){
+    if(userLoginEnabled && teamLoginEnabled){
+      hint.textContent = 'Use your email and password, or leave email empty and use the shared team password.';
+    } else if(userLoginEnabled){
+      hint.textContent = 'Sign in with the email and password you registered.';
+    } else if(teamLoginEnabled){
+      hint.textContent = 'Enter the team password from your administrator.';
+    } else {
+      hint.textContent = '';
+    }
+  }
+  if(linkSu) linkSu.classList.toggle('hidden', !signupEnabledState);
+  showAuthPanel('login');
+}
+
+function showAuthPanel(which){
+  const login = document.getElementById('panelLogin');
+  const signup = document.getElementById('panelSignup');
+  const linkSu = document.getElementById('linkToSignup');
+  const linkLi = document.getElementById('linkToLogin');
+  if(which === 'signup'){
+    if(login) login.classList.add('hidden');
+    if(signup) signup.classList.remove('hidden');
+    if(linkSu) linkSu.classList.add('hidden');
+    if(linkLi) linkLi.classList.remove('hidden');
+  } else {
+    if(signup) signup.classList.add('hidden');
+    if(login) login.classList.remove('hidden');
+    if(linkSu) linkSu.classList.toggle('hidden', !signupEnabledState);
+    if(linkLi) linkLi.classList.add('hidden');
+  }
+}
+
 function showLogin(){
-  const el = document.getElementById('loginOverlay');
-  if (el) el.classList.remove('hidden');
+  const auth = document.getElementById('authScreen');
+  const main = document.getElementById('mainApp');
+  if(auth){
+    auth.classList.remove('hidden');
+    auth.setAttribute('aria-hidden', 'false');
+  }
+  if(main) main.classList.add('main-hidden');
 }
 
 function hideLogin(){
-  const el = document.getElementById('loginOverlay');
-  if (el) el.classList.add('hidden');
+  const auth = document.getElementById('authScreen');
+  const main = document.getElementById('mainApp');
+  if(auth){
+    auth.classList.add('hidden');
+    auth.setAttribute('aria-hidden', 'true');
+  }
+  if(main) main.classList.remove('main-hidden');
+}
+
+async function submitSignup(){
+  const err = document.getElementById('signupError');
+  const btn = document.getElementById('btnSignupSubmit');
+  if(err){ err.style.display = 'none'; err.textContent = ''; }
+  const emailEl = document.getElementById('signupEmail');
+  const p1 = document.getElementById('signupPassword');
+  const p2 = document.getElementById('signupPassword2');
+  const codeEl = document.getElementById('signupCode');
+  const email = emailEl ? emailEl.value.trim().toLowerCase() : '';
+  const password = p1 ? p1.value : '';
+  const signupCode = codeEl ? codeEl.value : '';
+  if(password !== (p2 ? p2.value : '')){
+    if(err){ err.textContent = 'Passwords do not match'; err.style.display = 'block'; }
+    return;
+  }
+  if(btn){ btn.disabled = true; btn.dataset._t = btn.textContent; btn.textContent = 'Creating…'; }
+  try{
+    const res = await fetch('/api/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, signupCode }),
+    });
+    let data = {};
+    try{ data = await res.json(); } catch(e){}
+    if(!res.ok){
+      const msg = data.error || 'Registration failed';
+      if(err){ err.textContent = msg; err.style.display = 'block'; }
+      showToast(msg, 'error');
+      return;
+    }
+    showToast('Account created — sign in below.', 'success');
+    showAuthPanel('login');
+    const le = document.getElementById('loginEmail');
+    if(le) le.value = email;
+    const lp = document.getElementById('loginPassword');
+    if(lp) lp.value = '';
+    if(p1) p1.value = '';
+    if(p2) p2.value = '';
+    if(codeEl) codeEl.value = '';
+  } catch(e){
+    showToast('Network error.', 'error');
+  } finally {
+    if(btn){ btn.disabled = false; btn.textContent = btn.dataset._t || 'Create account'; }
+  }
 }
 
 async function submitLogin(){
-  const pw = document.getElementById('loginPassword');
   const err = document.getElementById('loginError');
-  const btn = document.querySelector('#loginOverlay .btn.primary');
+  const btn = document.getElementById('btnLoginSubmit');
+  const em = document.getElementById('loginEmail');
+  const pw = document.getElementById('loginPassword');
   if (err) { err.style.display = 'none'; err.textContent = ''; }
+  const email = em && em.value ? em.value.trim().toLowerCase() : '';
+  const password = pw ? pw.value : '';
+  if(userLoginEnabled && !teamLoginEnabled && !email){
+    showToast('Email is required.', 'error');
+    if(err){ err.textContent = 'Email is required'; err.style.display = 'block'; }
+    return;
+  }
+  if(!password){
+    showToast('Enter a password.', 'error');
+    return;
+  }
   if (btn) { btn.disabled = true; btn.dataset._t = btn.textContent; btn.textContent = 'Signing in…'; }
   try {
+    const body = email ? { email, password } : { password };
     const res = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: pw ? pw.value : '' }),
+      body: JSON.stringify(body),
     });
     if (!res.ok) {
       if (err) { err.textContent = 'Invalid credentials'; err.style.display = 'block'; }
@@ -84,6 +203,7 @@ async function submitLogin(){
     localStorage.setItem(TOKEN_KEY, authToken);
     localStorage.setItem(ROLE_KEY, userRole);
     if (pw) pw.value = '';
+    if (em) em.value = '';
     const ok = await loadDataCore();
     if (!ok) {
       if (err) { err.textContent = 'Could not load orders'; err.style.display = 'block'; }
@@ -120,6 +240,7 @@ async function boot(){
     st = await fetch('/api/auth/status').then((r) => r.json());
   } catch (e) {}
   if (st.version) setAppVersion(st.version);
+  configureAuthPanels(st);
   authRequired = !!st.authEnabled;
   if (!authRequired) {
     authToken = null;
@@ -131,6 +252,11 @@ async function boot(){
   }
   if (!authToken) {
     showLogin();
+    const params = new URLSearchParams(window.location.search);
+    const a = params.get('auth');
+    if (a === 'signup' && signupEnabledState) showAuthPanel('signup');
+    else if (a === 'login') showAuthPanel('login');
+    if (a) history.replaceState({}, '', window.location.pathname);
     applyRoleUI();
     return;
   }
@@ -140,6 +266,8 @@ async function boot(){
     localStorage.removeItem(ROLE_KEY);
     authToken = null;
     showLogin();
+    applyRoleUI();
+    return;
   }
   applyRoleUI();
 }

@@ -23,6 +23,18 @@ Set these on your host (Render **Environment**):
 
 If **`AUTH_SECRET`** and at least one password are **not** set, the API stays **open** (fine for trusted local networks only).
 
+### Team login vs accounts (MongoDB)
+
+- **Team passwords** (`EDITOR_PASSWORD` / `VIEWER_PASSWORD`): one shared password per role — no email.
+- **Email accounts** (optional): set **`ALLOW_USER_LOGIN=1`** with **`MONGODB_URI`**. Users sign in with email + password stored in the `users` collection.
+- **Self-service sign up** (optional): set **`ALLOW_SIGNUP=1`** with **`MONGODB_URI`**. New users get the **viewer** role. Optional shared secret: **`SIGNUP_CODE`** (if set, registrants must provide it).
+
+Sign up implies email login, so `ALLOW_USER_LOGIN` is effectively on when `ALLOW_SIGNUP=1`.
+
+To **promote** a registered user to editor, in Atlas open the `users` collection and set `role` to `editor` for that document (or keep using shared `EDITOR_PASSWORD` for admins).
+
+**URLs:** `https://your-site/login.html` and `signup.html` redirect to the app; or open `/?auth=login` and `/?auth=signup`.
+
 ## 3. Rate limits (abuse protection)
 
 Defaults: **300** requests per 15 minutes per IP on API routes; **30** login attempts per 15 minutes per IP.

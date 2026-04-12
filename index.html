@@ -9,17 +9,63 @@
 <body>
   <div id="toastHost" class="toast-host" aria-live="polite" aria-relevant="additions"></div>
 
-  <div id="loginOverlay" class="login-overlay hidden">
-    <div class="login-card">
-      <h2>Sign in</h2>
-      <p class="login-hint">Use the team password. Ask your admin if you do not have one.</p>
-      <input type="password" id="loginPassword" placeholder="Password" autocomplete="current-password" onkeydown="if(event.key==='Enter')submitLogin()">
-      <button type="button" class="btn primary" style="width:100%;margin-top:12px" onclick="submitLogin()">Sign in</button>
-      <p id="loginError" class="login-error" style="display:none"></p>
+  <!-- Full-page sign in / sign up (shown when server requires auth) -->
+  <div id="authScreen" class="auth-screen hidden" aria-hidden="true">
+    <div class="auth-layout">
+      <div class="auth-brand-side">
+        <div class="auth-brand-mark">
+          <img src="https://r2.image-upload.app/tyImg/S2TBO8Nq.png" alt="">
+        </div>
+        <h1 class="auth-title">Banzeeni</h1>
+        <p class="auth-tagline">Fuel order management — sign in to continue.</p>
+        <p id="authOpenHint" class="auth-note hidden">Your server is in <strong>open access</strong> mode (no passwords). You should not see this screen.</p>
+      </div>
+      <div class="auth-forms-side">
+        <div id="panelLogin" class="auth-card">
+          <h2 class="auth-heading">Sign in</h2>
+          <div id="authUserBlock" class="auth-field-group hidden">
+            <label for="loginEmail">Email</label>
+            <input type="email" id="loginEmail" name="email" autocomplete="username" placeholder="you@company.com">
+          </div>
+          <div class="auth-field-group">
+            <label for="loginPassword">Password</label>
+            <input type="password" id="loginPassword" name="password" autocomplete="current-password" placeholder="Password" onkeydown="if(event.key==='Enter')submitLogin()">
+          </div>
+          <p id="authLoginHint" class="login-hint"></p>
+          <button type="button" class="btn primary auth-submit" id="btnLoginSubmit" onclick="submitLogin()">Sign in</button>
+          <p id="loginError" class="login-error" style="display:none"></p>
+        </div>
+        <div id="panelSignup" class="auth-card hidden">
+          <h2 class="auth-heading">Create account</h2>
+          <p class="login-hint">New accounts are <strong>view-only</strong> unless an admin promotes you. Ask your admin for an editor team password if you need to enter orders.</p>
+          <div class="auth-field-group">
+            <label for="signupEmail">Email</label>
+            <input type="email" id="signupEmail" autocomplete="email" placeholder="you@company.com">
+          </div>
+          <div class="auth-field-group">
+            <label for="signupPassword">Password</label>
+            <input type="password" id="signupPassword" autocomplete="new-password" placeholder="At least 8 characters">
+          </div>
+          <div class="auth-field-group">
+            <label for="signupPassword2">Confirm password</label>
+            <input type="password" id="signupPassword2" autocomplete="new-password" placeholder="Repeat password">
+          </div>
+          <div id="signupCodeRow" class="auth-field-group">
+            <label for="signupCode">Signup code <span class="auth-optional">(if required)</span></label>
+            <input type="text" id="signupCode" autocomplete="off" placeholder="From your admin">
+          </div>
+          <button type="button" class="btn primary auth-submit" id="btnSignupSubmit" onclick="submitSignup()">Create account</button>
+          <p id="signupError" class="login-error" style="display:none"></p>
+        </div>
+        <div class="auth-links">
+          <button type="button" class="link-btn hidden" id="linkToSignup" onclick="showAuthPanel('signup')">Create an account</button>
+          <button type="button" class="link-btn hidden" id="linkToLogin" onclick="showAuthPanel('login')">Already have an account? Sign in</button>
+        </div>
+      </div>
     </div>
   </div>
 
-  <div class="app">
+  <div id="mainApp" class="app">
     <div class="topbar">
       <div class="brand">
         <div class="brand-mark">
@@ -154,7 +200,7 @@
         </table>
       </div>
     </div>
-  </div>
+  </div><!-- #mainApp -->
 
   <div class="modal-bg" id="modalBg">
     <div class="modal">
