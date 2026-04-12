@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Banzeeni WhatsApp Data Management</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app">
+    <div class="topbar">
+      <div class="brand">
+        <div class="brand-mark">
+          <img src="https://r2.image-upload.app/tyImg/S2TBO8Nq.png" alt="Banzeeni logo">
+        </div>
+        <div>
+          <h1>Banzeeni WhatsApp Data Management</h1>
+          <p>Professional fuel delivery order tracking and reporting for manager-ready presentation.</p>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <div class="tabs">
+          <button class="tab active" onclick="switchTab('orders')">Orders</button>
+          <button class="tab" onclick="switchTab('reports')">Reports</button>
+        </div>
+        <button class="btn" onclick="document.getElementById('importFile').click()">Upload CSV</button>
+        <button class="btn primary" onclick="openModal()">+ New Order</button>
+      </div>
+    </div>
+    <div id="stats" class="stats"></div>
+    <div class="filters">
+      <input type="text" id="search" placeholder="Search customer or phone..." oninput="debounceRender()">
+      <select id="filterZone" onchange="render()"><option value="">All zones</option></select>
+      <select id="filterFuel" onchange="render()"><option value="">All fuel types</option><option>Muhasan</option><option>Super</option></select>
+      <select id="filterStatus" onchange="render()"><option value="">All statuses</option><option>Completed</option><option>Cancelled</option><option>Pending</option></select>
+      <select id="filterRider" onchange="render()"><option value="">All riders</option></select>
+      <input type="file" id="importFile" accept=".csv" style="display:none" onchange="importCSV(event)">
+      <button class="btn primary" onclick="exportCSV()">Export filtered CSV</button>
+      <button class="btn" onclick="clearFilters()">Clear filters</button>
+    </div>
+    <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:80px">Date</th>
+              <th style="width:115px">Customer</th>
+              <th style="width:95px">Phone</th>
+              <th style="width:110px">Zone</th>
+              <th style="width:45px">Truck</th>
+              <th style="width:105px">Rider</th>
+              <th style="width:55px">Fuel</th>
+              <th style="width:72px">Price</th>
+              <th style="width:55px">Liters</th>
+              <th style="width:82px">Status</th>
+              <th style="width:95px">Notes</th>
+              <th style="width:110px">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+      <div class="pager" id="pager"></div>
+    </div>
+
+    <!-- REPORTS SECTION -->
+    <div class="section" id="sec-reports">
+      <div class="report-hero">
+        <div>
+          <div class="report-title">Reports</div>
+          <p class="report-subtitle">View fuel delivery performance and summaries without the order management interface.</p>
+        </div>
+        <div class="report-hero-actions">
+          <button class="btn secondary" onclick="switchTab('orders')">Orders</button>
+          <button class="btn ghost" onclick="switchTab('reports')">Reports</button>
+        </div>
+      </div>
+      <div class="report-controls">
+        <select id="rPeriod" onchange="renderReports()">
+          <option value="today">Today</option>
+          <option value="week">This week</option>
+          <option value="month" selected>This month</option>
+          <option value="all">All time</option>
+          <option value="custom">Custom range</option>
+        </select>
+        <input type="date" id="rFrom" style="display:none" onchange="renderReports()">
+        <input type="date" id="rTo" style="display:none" onchange="renderReports()">
+        <select id="rGroupBy" onchange="renderReports()">
+          <option value="zone">By zone</option>
+          <option value="rider">By rider</option>
+          <option value="truck">By truck</option>
+          <option value="fuel">By fuel type</option>
+          <option value="date">By date</option>
+        </select>
+        <select id="rMetric" onchange="renderReports()">
+          <option value="liters">Liters</option>
+          <option value="price">Revenue (IQD)</option>
+          <option value="count">Order count</option>
+        </select>
+      </div>
+      <div class="report-grid" id="reportStats"></div>
+      <div class="report-table-card">
+        <div class="report-section-header"><strong>Report details</strong> — top totals and breakdowns for the selected period.</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr id="reportHead"></tr></thead>
+            <tbody id="reportBody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div id="barChart"></div>
+    </div>
+  </div>
+
+  <!-- MODAL -->
+  <div class="modal-bg" id="modalBg">
+    <div class="modal">
+      <h2 id="modalTitle">New Order</h2>
+      <div class="form-grid">
+        <div><label>Date</label><input type="date" id="fDate"></div>
+        <div><label>Customer Name</label><input type="text" id="fName" placeholder="Name"></div>
+        <div><label>Phone</label><input type="text" id="fPhone" placeholder="75..."></div>
+        <div><label>Order Zone</label><select id="fZone"></select></div>
+        <div><label>Truck Code</label><select id="fTruck"></select></div>
+        <div><label>Rider</label><select id="fRider"></select></div>
+        <div><label>Fuel Type</label><select id="fFuel"><option>Muhasan</option><option>Super</option></select></div>
+        <div><label>Fuel Price (IQD)</label><input type="number" id="fPrice" placeholder="0" oninput="calcLiters()"></div>
+        <div><label>Liters (auto)</label><input type="number" id="fLiters" placeholder="auto" step="0.01"></div>
+        <div><label>Status</label><select id="fStatus"><option>Completed</option><option>Pending</option><option>Cancelled</option></select></div>
+      </div>
+      <div class="form-full"><label>Notes</label><textarea id="fNotes" placeholder="Any notes..."></textarea></div>
+      <div class="modal-actions">
+        <button class="btn" onclick="closeModal()">Cancel</button>
+        <button class="btn primary" onclick="saveOrder()">Save Order</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
