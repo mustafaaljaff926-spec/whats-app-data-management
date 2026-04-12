@@ -90,7 +90,7 @@ On a server with a **persistent disk** (or any machine where `backups/` is kept)
 2. [Render](https://render.com) → **New** → **Web Service** → connect the repo.
 3. **Build:** `npm install` — **Start:** `npm start`
 4. **Environment** → add `MONGODB_URI`, then auth variables if you use them.
-5. Deploy and open the URL Render gives you.
+5. Deploy and open the URL Render gives you — the site root **`/`** redirects to **`login.html`**; after signing in (or using **Open app** when auth is off), you use **`index.html`** for orders and reports.
 
 ## 6. Local vs online
 

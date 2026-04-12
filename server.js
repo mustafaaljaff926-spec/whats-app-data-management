@@ -69,6 +69,11 @@ app.use(cors());
 app.use(bodyParser.json({ limit: '2mb' }));
 app.use(apiLimiter);
 
+/** Landing page: sign-in first; open `index.html` for the app (or use links on login.html). */
+app.get('/', (req, res) => {
+  res.redirect(302, '/login.html');
+});
+
 app.use(express.static('.'));
 
 app.get('/health', (req, res) => {
