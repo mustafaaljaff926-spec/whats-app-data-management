@@ -30,12 +30,37 @@ let passwordResetsCollection = null;
 const AUTH_SECRET = process.env.AUTH_SECRET || '';
 const EDITOR_PW = process.env.EDITOR_PASSWORD || '';
 const VIEWER_PW = process.env.VIEWER_PASSWORD || '';
-/** Self-serve signups (MongoDB). */
-const signupEnabledFlag = process.env.ALLOW_SIGNUP === '1' && !!process.env.MONGODB_URI;
-/** Email/password login: explicit flag or signups enabled (new users must log in). */
+/** Email/password accounts in users.json when MongoDB is not used. */
+const USE_LOCAL_USERS = process.env.USE_LOCAL_USERS === '1';
+const LOCAL_USERS_FILE = path.join(__dirname, 'users.json');
+/** Self-serve signups (MongoDB or local users file). */
+const signupEnabledFlag =
+  process.env.ALLOW_SIGNUP === '1' && (!!process.env.MONGODB_URI || USE_LOCAL_USERS);
+/** Email/password login: Mongo or local file. */
 const userLoginEnabledFlag =
-  !!process.env.MONGODB_URI && (process.env.ALLOW_USER_LOGIN === '1' || signupEnabledFlag);
+  (!!process.env.MONGODB_URI && (process.env.ALLOW_USER_LOGIN === '1' || signupEnabledFlag)) ||
+  (USE_LOCAL_USERS &&
+    !!AUTH_SECRET &&
+    (process.env.ALLOW_USER_LOGIN === '1' || signupEnabledFlag));
 const authEnabled = Boolean(AUTH_SECRET && (EDITOR_PW || VIEWER_PW || userLoginEnabledFlag));
+
+function readLocalUsers() {
+  try {
+    const raw = fs.readFileSync(LOCAL_USERS_FILE, 'utf8');
+    const data = JSON.parse(raw);
+    return Array.isArray(data) ? data : Array.isArray(data.users) ? data.users : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeLocalUsers(users) {
+  fs.writeFileSync(LOCAL_USERS_FILE, JSON.stringify(users, null, 2), 'utf8');
+}
+
+function localUserStoreReady() {
+  return USE_LOCAL_USERS && !!AUTH_SECRET;
+}
 const TOKEN_EXPIRY = process.env.AUTH_TOKEN_DAYS ? `${process.env.AUTH_TOKEN_DAYS}d` : '7d';
 
 app.set('trust proxy', 1);
@@ -246,12 +271,13 @@ function aggregateOrdersForDay(orders, dayIso) {
 }
 
 app.get('/api/auth/status', (req, res) => {
+  const userStore = Boolean(usersCollection || localUserStoreReady());
   res.json({
     authEnabled,
     version: APP_VERSION,
-    signupEnabled: Boolean(signupEnabledFlag && usersCollection),
+    signupEnabled: Boolean(signupEnabledFlag && userStore),
     teamLoginEnabled: Boolean(EDITOR_PW || VIEWER_PW),
-    userLoginEnabled: Boolean(userLoginEnabledFlag && usersCollection),
+    userLoginEnabled: Boolean(userLoginEnabledFlag && userStore),
     openAccess: !authEnabled,
     passwordResetEnabled: passwordResetEnabled(),
     notifyEmailEnabled: notifyEmailConfigured(),
@@ -315,10 +341,17 @@ app.post('/api/auth/login', loginLimiter, async (req, res) => {
       return res.json({ token, role });
     }
 
-    if (!userLoginEnabledFlag || !usersCollection) {
+    if (!userLoginEnabledFlag) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
-    const user = await usersCollection.findOne({ email });
+    let user = null;
+    if (usersCollection) {
+      user = await usersCollection.findOne({ email });
+    } else if (localUserStoreReady()) {
+      user = readLocalUsers().find((u) => u.email === email) || null;
+    } else {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
     if (!user) return res.status(401).json({ error: 'Invalid credentials' });
     const ok = await bcrypt.compare(password, user.passwordHash);
     if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
@@ -332,7 +365,10 @@ app.post('/api/auth/login', loginLimiter, async (req, res) => {
 
 app.post('/api/auth/register', loginLimiter, async (req, res) => {
   try {
-    if (!signupEnabledFlag || !usersCollection) {
+    if (!signupEnabledFlag) {
+      return res.status(403).json({ error: 'Registration is disabled' });
+    }
+    if (!usersCollection && !localUserStoreReady()) {
       return res.status(403).json({ error: 'Registration is disabled' });
     }
     const email = String(req.body.email || '').trim().toLowerCase();
@@ -347,12 +383,26 @@ app.post('/api/auth/register', loginLimiter, async (req, res) => {
     }
     if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
     const passwordHash = await bcrypt.hash(password, 10);
-    await usersCollection.insertOne({
-      email,
-      passwordHash,
-      role: 'viewer',
-      createdAt: new Date(),
-    });
+    if (usersCollection) {
+      await usersCollection.insertOne({
+        email,
+        passwordHash,
+        role: 'viewer',
+        createdAt: new Date(),
+      });
+    } else {
+      const list = readLocalUsers();
+      if (list.some((u) => u.email === email)) {
+        return res.status(409).json({ error: 'Email already registered' });
+      }
+      list.push({
+        email,
+        passwordHash,
+        role: 'viewer',
+        createdAt: new Date().toISOString(),
+      });
+      writeLocalUsers(list);
+    }
     res.json({ success: true });
   } catch (e) {
     if (e.code === 11000) return res.status(409).json({ error: 'Email already registered' });
@@ -822,7 +872,13 @@ initMongo()
     app.listen(port, host, () => {
       const backend = mongoCollection ? 'MongoDB' : `file (${path.basename(DATA_FILE)})`;
       const authMsg = authEnabled ? 'auth: on' : 'auth: off';
-      console.log(`Server on port ${port} — storage: ${backend}; ${authMsg}`);
+      const usersMsg =
+        USE_LOCAL_USERS && localUserStoreReady()
+          ? `; accounts: ${path.basename(LOCAL_USERS_FILE)}`
+          : usersCollection
+            ? '; accounts: MongoDB'
+            : '';
+      console.log(`Server on port ${port} — storage: ${backend}; ${authMsg}${usersMsg}`);
     });
   })
   .catch((err) => {

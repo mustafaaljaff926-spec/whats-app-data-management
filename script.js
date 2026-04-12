@@ -96,6 +96,13 @@ function configureAuthPanels(st){
   showAuthPanel('login');
 }
 
+function pulseAuthCard(el){
+  if(!el || el.classList.contains('hidden')) return;
+  el.classList.remove('auth-card-anim');
+  void el.offsetWidth;
+  el.classList.add('auth-card-anim');
+}
+
 function showAuthPanel(which){
   const login = document.getElementById('panelLogin');
   const signup = document.getElementById('panelSignup');
@@ -109,6 +116,9 @@ function showAuthPanel(which){
   if(reset) reset.classList.toggle('hidden', which !== 'reset');
   if(linkSu) linkSu.classList.toggle('hidden', which !== 'login' || !signupEnabledState);
   if(linkLi) linkLi.classList.toggle('hidden', which !== 'signup');
+  const map = { login, signup, forgot, reset };
+  const active = map[which];
+  requestAnimationFrame(function(){ pulseAuthCard(active); });
 }
 
 function showLogin(){

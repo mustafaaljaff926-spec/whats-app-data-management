@@ -36,6 +36,13 @@
     el.classList.toggle('hidden', !on);
   }
 
+  function pulseAuthCard(el) {
+    if (!el || el.classList.contains('hidden')) return;
+    el.classList.remove('auth-card-anim');
+    void el.offsetWidth;
+    el.classList.add('auth-card-anim');
+  }
+
   async function boot() {
     let st = { authEnabled: false };
     try {
@@ -50,10 +57,18 @@
     if (!st.authEnabled) {
       show(openOnly, true);
       show(mainForms, false);
+      document.body.classList.add('auth-page-ready');
+      requestAnimationFrame(function () {
+        pulseAuthCard(openOnly);
+      });
       return;
     }
     show(openOnly, false);
     show(mainForms, true);
+    requestAnimationFrame(function () {
+      var c = document.getElementById('loginCard') || document.getElementById('signupCard');
+      pulseAuthCard(c);
+    });
 
     var teamLogin = !!st.teamLoginEnabled;
     var userLogin = !!st.userLoginEnabled;
@@ -68,8 +83,16 @@
         var signupCard = document.getElementById('signupCard');
         show(disabled, true);
         show(signupCard, false);
+        document.body.classList.add('auth-page-ready');
+        requestAnimationFrame(function () {
+          pulseAuthCard(disabled);
+        });
         return;
       }
+      document.body.classList.add('auth-page-ready');
+      requestAnimationFrame(function () {
+        pulseAuthCard(document.getElementById('signupCard'));
+      });
       return;
     }
 
@@ -96,6 +119,7 @@
     if (linkSu) linkSu.classList.toggle('hidden', !signupOn);
     var linkForgot = document.getElementById('loginLinkForgot');
     if (linkForgot) linkForgot.classList.toggle('hidden', !(userLogin && resetOn));
+    document.body.classList.add('auth-page-ready');
   }
 
   async function doLogin() {
@@ -271,11 +295,17 @@
   function showLoginPanel() {
     show(document.getElementById('loginCard'), true);
     show(document.getElementById('forgotCard'), false);
+    requestAnimationFrame(function () {
+      pulseAuthCard(document.getElementById('loginCard'));
+    });
   }
 
   function showForgotPanel() {
     show(document.getElementById('loginCard'), false);
     show(document.getElementById('forgotCard'), true);
+    requestAnimationFrame(function () {
+      pulseAuthCard(document.getElementById('forgotCard'));
+    });
   }
 
   window.authPageLogin = doLogin;

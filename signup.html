@@ -19,10 +19,10 @@
         <p class="auth-tagline">Create a viewer account — ask an admin for editor access if you need to enter orders.</p>
       </div>
       <div class="auth-forms-side">
-        <div id="authOpenOnly" class="auth-card hidden">
-          <h2 class="auth-heading">Sign-up unavailable</h2>
-          <p class="login-hint">This server does not require sign-in, or registration is not enabled.</p>
-          <a class="btn primary auth-submit" href="index.html" style="text-align:center;text-decoration:none;display:inline-block">Open app</a>
+        <div id="authOpenOnly" class="auth-card auth-card-hero hidden">
+          <h2 class="auth-heading">Registration not available</h2>
+          <p class="login-hint">Accounts are off until the server enables them. Use <code class="auth-code">AUTH_SECRET</code>, <code class="auth-code">USE_LOCAL_USERS=1</code>, and <code class="auth-code">ALLOW_SIGNUP=1</code>, then restart.</p>
+          <a class="btn primary auth-submit auth-cta-pulse" href="index.html" style="text-align:center;text-decoration:none;display:inline-block">Open app</a>
         </div>
 
         <div id="authPageMain">
