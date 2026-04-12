@@ -43,6 +43,7 @@ body.report-view .report-hero,
 body.report-view .report-controls,
 body.report-view .report-grid,
 body.report-view .report-table-card,
+body.report-view .report-daily-card,
 body.report-view #barChart{width:100vw;max-width:none;margin:0}
 body.report-view .report-hero{position:relative;left:50%;right:50%;margin-left:-50vw;margin-right:-50vw;border-radius:0;border:none;border-top:none}
 body.report-view .report-hero{padding:24px 40px 24px;margin-bottom:0}
@@ -121,6 +122,11 @@ tbody td:last-child{min-width:140px}
 @keyframes bounceIn{0%{opacity:0;transform:scale(0.95)}50%{opacity:1;transform:scale(1.02)}70%{transform:scale(0.98)}100%{opacity:1;transform:scale(1)}}
 #barChart{background:rgba(15,8,39,0.95);border:1px solid rgba(167,139,250,0.18);border-radius:var(--border-radius-md);padding:1.3rem;box-shadow:0 18px 44px rgba(124,58,237,0.16)}
 .report-table-card{background:rgba(15,8,39,0.96);border:1px solid rgba(167,139,250,0.16);border-radius:var(--border-radius-md);overflow:hidden;box-shadow:0 18px 40px rgba(124,58,237,0.14);margin-bottom:1.5rem}
+.report-daily-card{margin-bottom:1.5rem}
+.daily-report-out{padding:0 22px 18px}
+.daily-report-split{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:8px}
+@media (max-width:900px){.daily-report-split{grid-template-columns:1fr}}
+.auth-card .link-btn{margin-top:10px;display:block;width:100%;text-align:center}
 .report-section-header{padding:18px 22px;border-bottom:1px solid rgba(167,139,250,0.18);font-size:14px;color:var(--color-text-secondary);background:rgba(167,139,250,0.05)}
 .report-table-card table{width:100%;border-collapse:collapse}
 .report-table-card th,.report-table-card td{padding:12px 14px;text-align:left;border-bottom:1px solid rgba(167,139,250,0.12);color:var(--color-text-secondary)}

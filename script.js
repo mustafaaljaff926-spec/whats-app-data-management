@@ -21,6 +21,7 @@ let fuelListenerHooked=false;
 let teamLoginEnabled=false;
 let userLoginEnabled=false;
 let signupEnabledState=false;
+let passwordResetEnabledState=false;
 
 function getStoredAuth(){
   authToken = localStorage.getItem(TOKEN_KEY);
@@ -80,25 +81,25 @@ function configureAuthPanels(st){
     }
   }
   if(linkSu) linkSu.classList.toggle('hidden', !signupEnabledState);
+  const linkForgot = document.getElementById('linkForgotPassword');
+  passwordResetEnabledState = !!st.passwordResetEnabled;
+  if(linkForgot) linkForgot.classList.toggle('hidden', !(userLoginEnabled && passwordResetEnabledState));
   showAuthPanel('login');
 }
 
 function showAuthPanel(which){
   const login = document.getElementById('panelLogin');
   const signup = document.getElementById('panelSignup');
+  const forgot = document.getElementById('panelForgot');
+  const reset = document.getElementById('panelReset');
   const linkSu = document.getElementById('linkToSignup');
   const linkLi = document.getElementById('linkToLogin');
-  if(which === 'signup'){
-    if(login) login.classList.add('hidden');
-    if(signup) signup.classList.remove('hidden');
-    if(linkSu) linkSu.classList.add('hidden');
-    if(linkLi) linkLi.classList.remove('hidden');
-  } else {
-    if(signup) signup.classList.add('hidden');
-    if(login) login.classList.remove('hidden');
-    if(linkSu) linkSu.classList.toggle('hidden', !signupEnabledState);
-    if(linkLi) linkLi.classList.add('hidden');
-  }
+  if(login) login.classList.toggle('hidden', which !== 'login');
+  if(signup) signup.classList.toggle('hidden', which !== 'signup');
+  if(forgot) forgot.classList.toggle('hidden', which !== 'forgot');
+  if(reset) reset.classList.toggle('hidden', which !== 'reset');
+  if(linkSu) linkSu.classList.toggle('hidden', which !== 'login' || !signupEnabledState);
+  if(linkLi) linkLi.classList.toggle('hidden', which !== 'signup');
 }
 
 function showLogin(){
@@ -164,6 +165,80 @@ async function submitSignup(){
     showToast('Network error.', 'error');
   } finally {
     if(btn){ btn.disabled = false; btn.textContent = btn.dataset._t || 'Create account'; }
+  }
+}
+
+async function submitForgotPassword(){
+  const err = document.getElementById('forgotError');
+  const ok = document.getElementById('forgotSuccess');
+  const btn = document.getElementById('btnForgotSubmit');
+  const em = document.getElementById('forgotEmail');
+  if(err){ err.style.display='none'; err.textContent=''; }
+  if(ok){ ok.style.display='none'; ok.textContent=''; }
+  const email = em ? em.value.trim().toLowerCase() : '';
+  if(!email){
+    if(err){ err.textContent='Enter your email.'; err.style.display='block'; }
+    return;
+  }
+  if(btn){ btn.disabled=true; btn.dataset._t=btn.textContent; btn.textContent='Sending…'; }
+  try{
+    const res = await fetch('/api/auth/forgot-password', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ email }),
+    });
+    let data={};
+    try{ data=await res.json(); }catch(e){}
+    const msg = data.message || 'If that email is registered, you will receive reset instructions shortly.';
+    if(ok){ ok.textContent=msg; ok.style.display='block'; }
+    showToast(msg, 'success', 5000);
+  }catch(e){
+    showToast('Network error.', 'error');
+  }finally{
+    if(btn){ btn.disabled=false; btn.textContent=btn.dataset._t||'Send reset link'; }
+  }
+}
+
+async function submitResetPassword(){
+  const err = document.getElementById('resetError');
+  const btn = document.getElementById('btnResetSubmit');
+  const tokEl = document.getElementById('resetTokenField');
+  const p1 = document.getElementById('resetPassword1');
+  const p2 = document.getElementById('resetPassword2');
+  if(err){ err.style.display='none'; err.textContent=''; }
+  const token = tokEl ? tokEl.value.trim() : '';
+  const password = p1 ? p1.value : '';
+  if(password !== (p2 ? p2.value : '')){
+    if(err){ err.textContent='Passwords do not match'; err.style.display='block'; }
+    return;
+  }
+  if(password.length < 8){
+    if(err){ err.textContent='Password must be at least 8 characters'; err.style.display='block'; }
+    return;
+  }
+  if(btn){ btn.disabled=true; btn.dataset._t=btn.textContent; btn.textContent='Saving…'; }
+  try{
+    const res = await fetch('/api/auth/reset-password', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ token, password }),
+    });
+    let data={};
+    try{ data=await res.json(); }catch(e){}
+    if(!res.ok){
+      const msg = data.error || 'Could not reset password';
+      if(err){ err.textContent=msg; err.style.display='block'; }
+      showToast(msg, 'error');
+      return;
+    }
+    showToast(data.message || 'Password updated — sign in.', 'success');
+    if(p1) p1.value='';
+    if(p2) p2.value='';
+    showAuthPanel('login');
+  }catch(e){
+    showToast('Network error.', 'error');
+  }finally{
+    if(btn){ btn.disabled=false; btn.textContent=btn.dataset._t||'Update password'; }
   }
 }
 
@@ -253,10 +328,18 @@ async function boot(){
   if (!authToken) {
     showLogin();
     const params = new URLSearchParams(window.location.search);
-    const a = params.get('auth');
-    if (a === 'signup' && signupEnabledState) showAuthPanel('signup');
-    else if (a === 'login') showAuthPanel('login');
-    if (a) history.replaceState({}, '', window.location.pathname);
+    const resetTok = params.get('reset');
+    if (resetTok) {
+      showAuthPanel('reset');
+      const rf = document.getElementById('resetTokenField');
+      if (rf) rf.value = resetTok;
+      history.replaceState({}, '', window.location.pathname);
+    } else {
+      const a = params.get('auth');
+      if (a === 'signup' && signupEnabledState) showAuthPanel('signup');
+      else if (a === 'login') showAuthPanel('login');
+      if (a) history.replaceState({}, '', window.location.pathname);
+    }
     applyRoleUI();
     return;
   }
@@ -349,7 +432,7 @@ async function refreshOrdersFromServer(){
     applyServerOrders(list);
     populateFilters();
     render();
-    if(currentTab === 'reports') renderReports();
+    if(currentTab === 'reports'){ renderReports(); loadDailyReport(); }
   } catch(e){ /* keep current UI if request fails */ }
 }
 
@@ -445,6 +528,7 @@ function importCSV(event){
       try{
         const res = await apiFetch('/orders', {
           method: 'POST',
+          headers: { 'X-Skip-Order-Notify': '1' },
           body: JSON.stringify(orderData)
         });
         if(res.ok){
@@ -498,6 +582,93 @@ function parseDate(str){
   const p=str.split('/');
   if(p.length===3) return new Date(parseInt(p[2]),parseInt(p[0])-1,parseInt(p[1]));
   return new Date(str);
+}
+
+function orderDateKeyForReport(dateStr){
+  const s = String(dateStr || '').trim();
+  if(!s) return null;
+  const p = s.split('/');
+  if(p.length === 3){
+    const m = parseInt(p[0], 10);
+    const d = parseInt(p[1], 10);
+    const y = parseInt(p[2], 10);
+    if(y && m >= 1 && m <= 12 && d >= 1 && d <= 31){
+      return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    }
+  }
+  const dt = new Date(s);
+  if(isNaN(dt.getTime())) return null;
+  return dt.toISOString().slice(0, 10);
+}
+
+function computeDailyReportLocal(dayIso){
+  const day = String(dayIso || '').slice(0, 10);
+  const inDay = orders.filter((o) => orderDateKeyForReport(o.date) === day);
+  const byZone = {};
+  const byTruck = {};
+  let liters = 0;
+  let revenue = 0;
+  for(const o of inDay){
+    liters += Number(o.liters) || 0;
+    revenue += Number(o.price) || 0;
+    const z = o.zone || '—';
+    const t = o.truck || '—';
+    if(!byZone[z]) byZone[z] = { zone: z, count: 0, liters: 0, revenue: 0 };
+    if(!byTruck[t]) byTruck[t] = { truck: t, count: 0, liters: 0, revenue: 0 };
+    byZone[z].count++;
+    byZone[z].liters += Number(o.liters) || 0;
+    byZone[z].revenue += Number(o.price) || 0;
+    byTruck[t].count++;
+    byTruck[t].liters += Number(o.liters) || 0;
+    byTruck[t].revenue += Number(o.price) || 0;
+  }
+  const sortDesc = (arr, key) => arr.sort((a, b) => b[key] - a[key]);
+  return {
+    date: day,
+    orderCount: inDay.length,
+    totalLiters: liters,
+    totalRevenue: revenue,
+    byZone: sortDesc(Object.values(byZone), 'liters'),
+    byTruck: sortDesc(Object.values(byTruck), 'liters'),
+  };
+}
+
+function renderDailyReportTables(data, hint){
+  const hintHtml = hint ? `<p class="login-hint" style="margin:0 0 10px">${hint}</p>` : '';
+  const zoneRows = data.byZone.map((z) => `<tr><td title="${z.zone}"><span class="zone-dot" style="background:${ZONE_COLORS[z.zone] || '#aaa'}"></span>${z.zone}</td><td>${z.count}</td><td>${Math.round(z.liters).toLocaleString()}</td><td>${z.revenue.toLocaleString()}</td></tr>`).join('');
+  const truckRows = data.byTruck.map((t) => `<tr><td>${t.truck}</td><td>${t.count}</td><td>${Math.round(t.liters).toLocaleString()}</td><td>${t.revenue.toLocaleString()}</td></tr>`).join('');
+  return `${hintHtml}
+    <div class="report-grid" style="margin-bottom:16px">
+      <div class="report-stat"><div class="lbl">Orders</div><div class="val">${data.orderCount}</div></div>
+      <div class="report-stat"><div class="lbl">Liters</div><div class="val">${Math.round(data.totalLiters).toLocaleString()}</div></div>
+      <div class="report-stat"><div class="lbl">Revenue (IQD)</div><div class="val">${data.totalRevenue.toLocaleString()}</div></div>
+    </div>
+    <div class="daily-report-split">
+      <div><strong>By zone</strong><div class="table-wrap"><table><thead><tr><th>Zone</th><th>#</th><th>Liters</th><th>IQD</th></tr></thead><tbody>${zoneRows || '<tr><td colspan="4">No orders</td></tr>'}</tbody></table></div></div>
+      <div><strong>By truck</strong><div class="table-wrap"><table><thead><tr><th>Truck</th><th>#</th><th>Liters</th><th>IQD</th></tr></thead><tbody>${truckRows || '<tr><td colspan="4">No orders</td></tr>'}</tbody></table></div></div>
+    </div>`;
+}
+
+async function loadDailyReport(){
+  const dateEl = document.getElementById('dailyReportDate');
+  const out = document.getElementById('dailyReportOut');
+  if(!out || !dateEl) return;
+  if(!dateEl.value) dateEl.value = new Date().toISOString().slice(0, 10);
+  const date = dateEl.value;
+  out.innerHTML = '<p class="login-hint">Loading…</p>';
+  if(serverMode){
+    try{
+      const res = await apiFetch('/api/reports/daily?date=' + encodeURIComponent(date));
+      if(res.ok){
+        const data = await res.json();
+        out.innerHTML = renderDailyReportTables(data, '');
+        return;
+      }
+    }catch(e){ /* fall through */ }
+  }
+  const data = computeDailyReportLocal(date);
+  const hint = serverMode ? 'Using order list in your browser — server daily report was unavailable.' : '';
+  out.innerHTML = renderDailyReportTables(data, hint);
 }
 
 function getDateRange(){
@@ -577,7 +748,7 @@ function switchTab(tab){
   document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
   const sec = document.getElementById('sec-'+tab);
   if(sec) sec.classList.add('active');
-  if(tab==='reports') renderReports();
+  if(tab==='reports'){ renderReports(); loadDailyReport(); }
   else if(tab==='orders') render();
   else if(tab==='audit') loadAudit();
 }

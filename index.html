@@ -34,6 +34,34 @@
           <p id="authLoginHint" class="login-hint"></p>
           <button type="button" class="btn primary auth-submit" id="btnLoginSubmit" onclick="submitLogin()">Sign in</button>
           <p id="loginError" class="login-error" style="display:none"></p>
+          <button type="button" class="link-btn hidden" id="linkForgotPassword" onclick="showAuthPanel('forgot')">Forgot password?</button>
+        </div>
+        <div id="panelForgot" class="auth-card hidden">
+          <h2 class="auth-heading">Reset password</h2>
+          <p class="login-hint">Enter your account email. If it exists, we will send a reset link.</p>
+          <div class="auth-field-group">
+            <label for="forgotEmail">Email</label>
+            <input type="email" id="forgotEmail" autocomplete="email" placeholder="you@company.com">
+          </div>
+          <button type="button" class="btn primary auth-submit" id="btnForgotSubmit" onclick="submitForgotPassword()">Send reset link</button>
+          <p id="forgotError" class="login-error" style="display:none"></p>
+          <p id="forgotSuccess" class="login-hint" style="display:none;color:var(--color-ok,#1D9E75)"></p>
+          <button type="button" class="link-btn" onclick="showAuthPanel('login')">Back to sign in</button>
+        </div>
+        <div id="panelReset" class="auth-card hidden">
+          <h2 class="auth-heading">New password</h2>
+          <p class="login-hint">Choose a new password for your account.</p>
+          <input type="hidden" id="resetTokenField" value="">
+          <div class="auth-field-group">
+            <label for="resetPassword1">New password</label>
+            <input type="password" id="resetPassword1" autocomplete="new-password" placeholder="At least 8 characters">
+          </div>
+          <div class="auth-field-group">
+            <label for="resetPassword2">Confirm password</label>
+            <input type="password" id="resetPassword2" autocomplete="new-password" placeholder="Repeat password">
+          </div>
+          <button type="button" class="btn primary auth-submit" id="btnResetSubmit" onclick="submitResetPassword()">Update password</button>
+          <p id="resetError" class="login-error" style="display:none"></p>
         </div>
         <div id="panelSignup" class="auth-card hidden">
           <h2 class="auth-heading">Create account</h2>
@@ -137,6 +165,15 @@
           <button type="button" class="btn secondary" onclick="switchTab('orders')">Orders</button>
           <button type="button" class="btn ghost" onclick="switchTab('reports')">Reports</button>
         </div>
+      </div>
+      <div class="report-daily-card report-table-card">
+        <div class="report-section-header"><strong>Daily totals</strong> — liters and revenue for one calendar day, split by zone and truck.</div>
+        <div class="report-controls" style="margin-top:12px">
+          <label for="dailyReportDate">Date</label>
+          <input type="date" id="dailyReportDate" title="Report date" onchange="loadDailyReport()">
+          <button type="button" class="btn secondary" onclick="loadDailyReport()">Refresh</button>
+        </div>
+        <div id="dailyReportOut" class="daily-report-out"></div>
       </div>
       <div class="report-controls">
         <select id="rPeriod" onchange="renderReports()">

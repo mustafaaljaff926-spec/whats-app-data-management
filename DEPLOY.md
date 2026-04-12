@@ -35,6 +35,37 @@ To **promote** a registered user to editor, in Atlas open the `users` collection
 
 **URLs:** `https://your-site/login.html` and `signup.html` redirect to the app; or open `/?auth=login` and `/?auth=signup`.
 
+### Password reset (email accounts)
+
+Requires MongoDB, **`ALLOW_USER_LOGIN=1`** (or **`ALLOW_SIGNUP=1`**), **`AUTH_SECRET`**, SMTP, and a public base URL:
+
+| Variable | Purpose |
+|----------|---------|
+| `PUBLIC_APP_URL` | App base URL with no trailing slash (e.g. `https://your-service.onrender.com`). Used in reset links (`/?reset=…`). |
+| `SMTP_HOST` | Outbound mail server. |
+| `SMTP_PORT` | Default `587`. |
+| `SMTP_USER` / `SMTP_PASS` | Set if the server requires authentication. |
+| `SMTP_SECURE` | Set `1` for implicit TLS (typical on port `465`). |
+| `SMTP_FROM` | Sender address (e.g. `Banzeeni <noreply@example.com>`). |
+
+Reset tokens are stored in the **`password_resets`** collection (TTL on `expiresAt`). The sign-in screen shows **Forgot password?** when this is fully configured.
+
+### New-order notifications (email and/or SMS)
+
+Sent when an editor **creates one order** through the app. **CSV import** does not send alerts (requests include `X-Skip-Order-Notify`).
+
+| Variable | Purpose |
+|----------|---------|
+| `NOTIFY_EMAIL_TO` | Comma-separated recipient emails (requires the same **`SMTP_*`** variables as above). |
+| `TWILIO_ACCOUNT_SID` | Twilio Account SID. |
+| `TWILIO_AUTH_TOKEN` | Twilio auth token. |
+| `TWILIO_PHONE_NUMBER` | Twilio “from” number (E.164). |
+| `NOTIFY_SMS_TO` | Recipient number (E.164). |
+
+### Daily report (zone / truck)
+
+The **Reports** tab includes **Daily totals** (date picker + by zone / by truck). The API **`GET /api/reports/daily?date=YYYY-MM-DD`** returns the same JSON for authenticated users (any role).
+
 ## 3. Rate limits (abuse protection)
 
 Defaults: **300** requests per 15 minutes per IP on API routes; **30** login attempts per 15 minutes per IP.
