@@ -7,6 +7,18 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+  <div id="toastHost" class="toast-host" aria-live="polite" aria-relevant="additions"></div>
+
+  <div id="loginOverlay" class="login-overlay hidden">
+    <div class="login-card">
+      <h2>Sign in</h2>
+      <p class="login-hint">Use the team password. Ask your admin if you do not have one.</p>
+      <input type="password" id="loginPassword" placeholder="Password" autocomplete="current-password" onkeydown="if(event.key==='Enter')submitLogin()">
+      <button type="button" class="btn primary" style="width:100%;margin-top:12px" onclick="submitLogin()">Sign in</button>
+      <p id="loginError" class="login-error" style="display:none"></p>
+    </div>
+  </div>
+
   <div class="app">
     <div class="topbar">
       <div class="brand">
@@ -15,30 +27,37 @@
         </div>
         <div>
           <h1>Banzeeni WhatsApp Data Management</h1>
-          <p>Professional fuel delivery order tracking and reporting for manager-ready presentation.</p>
+          <p>Professional fuel delivery order tracking and reporting for manager-ready presentation. <span id="appVersion" class="app-version"></span></p>
         </div>
       </div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <span id="roleBadge" class="role-badge" style="display:none"></span>
+        <button type="button" class="btn" id="logoutBtn" onclick="logout()" style="display:none">Log out</button>
         <div class="tabs">
-          <button class="tab active" onclick="switchTab('orders')">Orders</button>
-          <button class="tab" onclick="switchTab('reports')">Reports</button>
+          <button type="button" class="tab active" data-tab="orders" onclick="switchTab('orders')">Orders</button>
+          <button type="button" class="tab" data-tab="reports" onclick="switchTab('reports')">Reports</button>
+          <button type="button" class="tab editor-only" data-tab="audit" onclick="switchTab('audit')">Audit</button>
         </div>
-        <button class="btn" onclick="document.getElementById('importFile').click()">Upload CSV</button>
-        <button class="btn primary" onclick="openModal()">+ New Order</button>
+        <button type="button" class="btn editor-only" onclick="document.getElementById('importFile').click()">Upload CSV</button>
+        <button type="button" class="btn primary editor-only" onclick="openModal()">+ New Order</button>
       </div>
     </div>
-    <div id="stats" class="stats"></div>
-    <div class="filters">
-      <input type="text" id="search" placeholder="Search customer or phone..." oninput="debounceRender()">
-      <select id="filterZone" onchange="render()"><option value="">All zones</option></select>
-      <select id="filterFuel" onchange="render()"><option value="">All fuel types</option><option>Muhasan</option><option>Super</option></select>
-      <select id="filterStatus" onchange="render()"><option value="">All statuses</option><option>Completed</option><option>Cancelled</option><option>Pending</option></select>
-      <select id="filterRider" onchange="render()"><option value="">All riders</option></select>
-      <input type="file" id="importFile" accept=".csv" style="display:none" onchange="importCSV(event)">
-      <button class="btn primary" onclick="exportCSV()">Export filtered CSV</button>
-      <button class="btn" onclick="clearFilters()">Clear filters</button>
-    </div>
-    <div class="table-wrap">
+
+    <div id="sec-orders" class="section active">
+      <div id="stats" class="stats"></div>
+      <div class="filters">
+        <input type="text" id="search" placeholder="Search customer or phone..." oninput="debounceRender()">
+        <input type="date" id="filterDateFrom" title="From date" onchange="render()">
+        <input type="date" id="filterDateTo" title="To date" onchange="render()">
+        <select id="filterZone" onchange="render()"><option value="">All zones</option></select>
+        <select id="filterFuel" onchange="render()"><option value="">All fuel types</option><option>Muhasan</option><option>Super</option></select>
+        <select id="filterStatus" onchange="render()"><option value="">All statuses</option><option>Completed</option><option>Cancelled</option><option>Pending</option></select>
+        <select id="filterRider" onchange="render()"><option value="">All riders</option></select>
+        <input type="file" id="importFile" accept=".csv" style="display:none" onchange="importCSV(event)">
+        <button type="button" class="btn primary" onclick="exportCSV()">Export filtered CSV</button>
+        <button type="button" class="btn" onclick="clearFilters()">Clear filters</button>
+      </div>
+      <div class="table-wrap">
         <table>
           <thead>
             <tr>
@@ -53,7 +72,7 @@
               <th style="width:55px">Liters</th>
               <th style="width:82px">Status</th>
               <th style="width:95px">Notes</th>
-              <th style="width:110px">Actions</th>
+              <th style="width:110px" class="editor-only">Actions</th>
             </tr>
           </thead>
           <tbody id="tbody"></tbody>
@@ -62,7 +81,6 @@
       <div class="pager" id="pager"></div>
     </div>
 
-    <!-- REPORTS SECTION -->
     <div class="section" id="sec-reports">
       <div class="report-hero">
         <div>
@@ -70,8 +88,8 @@
           <p class="report-subtitle">View fuel delivery performance and summaries without the order management interface.</p>
         </div>
         <div class="report-hero-actions">
-          <button class="btn secondary" onclick="switchTab('orders')">Orders</button>
-          <button class="btn ghost" onclick="switchTab('reports')">Reports</button>
+          <button type="button" class="btn secondary" onclick="switchTab('orders')">Orders</button>
+          <button type="button" class="btn ghost" onclick="switchTab('reports')">Reports</button>
         </div>
       </div>
       <div class="report-controls">
@@ -109,9 +127,35 @@
       </div>
       <div id="barChart"></div>
     </div>
+
+    <div class="section editor-only" id="sec-audit">
+      <div class="report-hero">
+        <div>
+          <div class="report-title">Audit log</div>
+          <p class="report-subtitle">Who changed what (editors only). Newest first.</p>
+        </div>
+        <div class="report-hero-actions">
+          <button type="button" class="btn secondary" onclick="loadAudit()">Refresh</button>
+          <button type="button" class="btn ghost" onclick="switchTab('orders')">Orders</button>
+        </div>
+      </div>
+      <div class="table-wrap audit-table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:180px">Time (UTC)</th>
+              <th style="width:80px">Role</th>
+              <th style="width:120px">Action</th>
+              <th style="width:72px">Order #</th>
+              <th>Detail</th>
+            </tr>
+          </thead>
+          <tbody id="auditBody"></tbody>
+        </table>
+      </div>
+    </div>
   </div>
 
-  <!-- MODAL -->
   <div class="modal-bg" id="modalBg">
     <div class="modal">
       <h2 id="modalTitle">New Order</h2>
@@ -129,8 +173,8 @@
       </div>
       <div class="form-full"><label>Notes</label><textarea id="fNotes" placeholder="Any notes..."></textarea></div>
       <div class="modal-actions">
-        <button class="btn" onclick="closeModal()">Cancel</button>
-        <button class="btn primary" onclick="saveOrder()">Save Order</button>
+        <button type="button" class="btn" onclick="closeModal()">Cancel</button>
+        <button type="button" class="btn primary editor-only" id="saveOrderBtn" onclick="saveOrder()">Save Order</button>
       </div>
     </div>
   </div>

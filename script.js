@@ -12,6 +12,137 @@ const POLL_MS=15000;
 const PAGE=15;
 const STORAGE_KEY='fuel-orders-data';
 const THEME_KEY='fuel-orders-theme';
+const TOKEN_KEY='fuel-orders-token';
+const ROLE_KEY='fuel-orders-role';
+let authToken=null;
+let userRole='editor';
+let authRequired=false;
+let fuelListenerHooked=false;
+
+function getStoredAuth(){
+  authToken = localStorage.getItem(TOKEN_KEY);
+  const r = localStorage.getItem(ROLE_KEY);
+  userRole = r === 'viewer' ? 'viewer' : 'editor';
+}
+
+function apiFetch(url, options = {}){
+  const headers = { ...options.headers };
+  if (options.body && typeof options.body === 'string' && !headers['Content-Type']) {
+    headers['Content-Type'] = 'application/json';
+  }
+  if (authToken) headers['Authorization'] = 'Bearer ' + authToken;
+  return fetch(url, { ...options, headers });
+}
+
+function applyRoleUI(){
+  document.body.classList.toggle('role-viewer', userRole === 'viewer');
+  document.body.classList.toggle('role-editor', userRole !== 'viewer');
+  const badge = document.getElementById('roleBadge');
+  const logoutBtn = document.getElementById('logoutBtn');
+  if (badge && logoutBtn) {
+    if (authRequired) {
+      badge.style.display = 'inline-block';
+      logoutBtn.style.display = 'inline-block';
+      badge.textContent = userRole === 'viewer' ? 'Viewer' : 'Editor';
+    } else {
+      badge.style.display = 'none';
+      logoutBtn.style.display = 'none';
+    }
+  }
+}
+
+function showLogin(){
+  const el = document.getElementById('loginOverlay');
+  if (el) el.classList.remove('hidden');
+}
+
+function hideLogin(){
+  const el = document.getElementById('loginOverlay');
+  if (el) el.classList.add('hidden');
+}
+
+async function submitLogin(){
+  const pw = document.getElementById('loginPassword');
+  const err = document.getElementById('loginError');
+  const btn = document.querySelector('#loginOverlay .btn.primary');
+  if (err) { err.style.display = 'none'; err.textContent = ''; }
+  if (btn) { btn.disabled = true; btn.dataset._t = btn.textContent; btn.textContent = 'Signing in…'; }
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: pw ? pw.value : '' }),
+    });
+    if (!res.ok) {
+      if (err) { err.textContent = 'Invalid credentials'; err.style.display = 'block'; }
+      showToast('Invalid credentials', 'error', 3500);
+      return;
+    }
+    const data = await res.json();
+    authToken = data.token;
+    userRole = data.role;
+    localStorage.setItem(TOKEN_KEY, authToken);
+    localStorage.setItem(ROLE_KEY, userRole);
+    if (pw) pw.value = '';
+    const ok = await loadDataCore();
+    if (!ok) {
+      if (err) { err.textContent = 'Could not load orders'; err.style.display = 'block'; }
+      showToast('Signed in but could not load orders.', 'error');
+    } else {
+      showToast('Signed in', 'success', 2200);
+    }
+  } catch (e) {
+    showToast('Network error — check your connection.', 'error');
+    if (err) { err.textContent = 'Network error'; err.style.display = 'block'; }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = btn.dataset._t || 'Sign in'; }
+  }
+}
+
+function logout(){
+  authToken = null;
+  userRole = 'editor';
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(ROLE_KEY);
+  stopSharedPolling();
+  orders = [];
+  nextId = 1;
+  serverMode = false;
+  render();
+  showLogin();
+  applyRoleUI();
+}
+
+async function boot(){
+  getStoredAuth();
+  let st = { authEnabled: false };
+  try {
+    st = await fetch('/api/auth/status').then((r) => r.json());
+  } catch (e) {}
+  if (st.version) setAppVersion(st.version);
+  authRequired = !!st.authEnabled;
+  if (!authRequired) {
+    authToken = null;
+    userRole = 'editor';
+    hideLogin();
+    await loadDataCore();
+    applyRoleUI();
+    return;
+  }
+  if (!authToken) {
+    showLogin();
+    applyRoleUI();
+    return;
+  }
+  const ok = await loadDataCore();
+  if (!ok) {
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(ROLE_KEY);
+    authToken = null;
+    showLogin();
+  }
+  applyRoleUI();
+}
 
 function applyTheme(theme){
   const dark = theme === 'dark';
@@ -28,6 +159,26 @@ function toggleTheme(){
 function loadTheme(){
   const saved = localStorage.getItem(THEME_KEY) || 'light';
   applyTheme(saved);
+}
+
+function showToast(message, variant = 'info', duration = 4400){
+  const host = document.getElementById('toastHost');
+  if(!host) return;
+  const el = document.createElement('div');
+  el.className = 'toast toast-' + variant;
+  el.setAttribute('role', 'status');
+  el.textContent = message;
+  host.appendChild(el);
+  requestAnimationFrame(() => el.classList.add('toast-visible'));
+  setTimeout(() => {
+    el.classList.remove('toast-visible');
+    setTimeout(() => el.remove(), 280);
+  }, duration);
+}
+
+function setAppVersion(v){
+  const el = document.getElementById('appVersion');
+  if(el && v) el.textContent = '· v' + v;
 }
 
 
@@ -63,7 +214,8 @@ function stopSharedPolling(){
 async function refreshOrdersFromServer(){
   if(!serverMode) return;
   try{
-    const res = await fetch('/orders');
+    const res = await apiFetch('/orders');
+    if(res.status === 401 && authRequired){ showLogin(); return; }
     if(!res.ok) return;
     const list = await res.json();
     applyServerOrders(list);
@@ -73,9 +225,10 @@ async function refreshOrdersFromServer(){
   } catch(e){ /* keep current UI if request fails */ }
 }
 
-async function loadData(){
+async function loadDataCore(){
   try{
-    const res = await fetch('/orders');
+    const res = await apiFetch('/orders');
+    if(res.status === 401) return false;
     if(res.ok){
       serverMode = true;
       applyServerOrders(await res.json());
@@ -83,6 +236,7 @@ async function loadData(){
       throw new Error();
     }
   } catch(e){
+    if(authRequired) return false;
     serverMode = false;
     const saved = localStorage.getItem(STORAGE_KEY);
     if(saved){
@@ -101,6 +255,13 @@ async function loadData(){
     visibilityHooked=true;
     document.addEventListener('visibilitychange', onVisibilityForSync);
   }
+  hideLogin();
+  applyRoleUI();
+  return true;
+}
+
+async function loadData(){
+  await loadDataCore();
 }
 
 function onVisibilityForSync(){
@@ -154,9 +315,8 @@ function importCSV(event){
       const notes = cols[10].trim().replace(/^"|"$/g,'');
       const orderData = {date,name,phone,zone,truck,rider,fuel,price,liters,status,notes};
       try{
-        const res = await fetch('/orders', {
+        const res = await apiFetch('/orders', {
           method: 'POST',
-          headers: {'Content-Type': 'application/json'},
           body: JSON.stringify(orderData)
         });
         if(res.ok){
@@ -172,6 +332,11 @@ function importCSV(event){
         serverAvailable = false;
         break;
       }
+    }
+    if(serverAvailable && authRequired && userRole === 'editor'){
+      try{
+        await apiFetch('/api/audit/event', { method: 'POST', body: JSON.stringify({ action: 'CSV_IMPORT', detail: { rows: rows.length } }) });
+      } catch(e){}
     }
     if(!serverAvailable){
       // Fallback to localStorage
@@ -195,7 +360,7 @@ function importCSV(event){
     populateFilters();
     render();
     renderReports();
-    alert('Imported '+rows.length+' rows.');
+    showToast('Imported ' + rows.length + ' rows.', 'success');
   };
   reader.readAsText(file,'utf-8');
   event.target.value = '';
@@ -280,11 +445,36 @@ function renderReports(){
 function switchTab(tab){
   currentTab = tab;
   document.body.classList.toggle('report-view', tab==='reports');
-  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.textContent.toLowerCase().includes(tab==='orders'?'order':'report')));
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active', t.getAttribute('data-tab') === tab));
   document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
-  document.getElementById('sec-'+tab).classList.add('active');
+  const sec = document.getElementById('sec-'+tab);
+  if(sec) sec.classList.add('active');
   if(tab==='reports') renderReports();
   else if(tab==='orders') render();
+  else if(tab==='audit') loadAudit();
+}
+
+function filterOrderDateRange(o){
+  const fromEl = document.getElementById('filterDateFrom');
+  const toEl = document.getElementById('filterDateTo');
+  const fromVal = fromEl && fromEl.value;
+  const toVal = toEl && toEl.value;
+  if(!fromVal && !toVal) return true;
+  const od = parseDate(o.date);
+  if(isNaN(od.getTime())) return true;
+  od.setHours(0,0,0,0);
+  const t = od.getTime();
+  if(fromVal){
+    const fd = new Date(fromVal);
+    fd.setHours(0,0,0,0);
+    if(t < fd.getTime()) return false;
+  }
+  if(toVal){
+    const td = new Date(toVal);
+    td.setHours(23,59,59,999);
+    if(t > td.getTime()) return false;
+  }
+  return true;
 }
 
 function filtered(){
@@ -294,7 +484,8 @@ function filtered(){
   const st=document.getElementById('filterStatus').value;
   const r=document.getElementById('filterRider').value;
   return orders.filter(o=>{
-    if(s&&!o.name.toLowerCase().includes(s)&&!o.phone.includes(s)) return false;
+    if(!filterOrderDateRange(o)) return false;
+    if(s&&!o.name.toLowerCase().includes(s)&&!String(o.phone).includes(s)) return false;
     if(z&&o.zone!==z) return false;
     if(f&&o.fuel!==f) return false;
     if(st&&o.status!==st) return false;
@@ -335,9 +526,9 @@ function render(){
       <td>${o.liters?o.liters.toFixed(2):'-'}</td>
       <td><span class="badge ${o.status.toLowerCase()}">${o.status}</span></td>
       <td title="${o.notes}">${o.notes||''}</td>
-      <td style="display:flex;gap:4px">
-        <button class="btn sm" onclick="editOrder(${o.id})">Edit</button>
-        <button class="btn sm" style="color:#A32D2D" onclick="deleteOrder(${o.id})">Del</button>
+      <td class="editor-only" style="display:flex;gap:4px">
+        <button type="button" class="btn sm" onclick="editOrder(${o.id})">Edit</button>
+        <button type="button" class="btn sm" style="color:#A32D2D" onclick="deleteOrder(${o.id})">Del</button>
       </td>
     </tr>
   `).join('');
@@ -371,10 +562,25 @@ function populateFilters(){
   if(!fTruck.options.length){TRUCKS.forEach(t=>{const o=document.createElement('option');o.value=t;o.textContent=t;fTruck.appendChild(o)});}
   const fRider=document.getElementById('fRider');
   if(fRider.options.length<2){const none=document.createElement('option');none.value='';none.textContent='— select rider —';fRider.appendChild(none);RIDERS.forEach(r=>{const o=document.createElement('option');o.value=r;o.textContent=r;fRider.appendChild(o)});}
-  document.getElementById('fFuel').addEventListener('change',calcLiters);
+  if(!fuelListenerHooked){
+    fuelListenerHooked=true;
+    document.getElementById('fFuel').addEventListener('change',calcLiters);
+  }
+}
+
+function orderDateToInput(o){
+  if(!o.date) return new Date().toISOString().split('T')[0];
+  if(String(o.date).includes('/')){
+    const parts=o.date.split('/');
+    if(parts.length===3) return `${parts[2]}-${String(parts[0]).padStart(2,'0')}-${String(parts[1]).padStart(2,'0')}`;
+  }
+  const d = new Date(o.date);
+  if(!isNaN(d.getTime())) return d.toISOString().split('T')[0];
+  return new Date().toISOString().split('T')[0];
 }
 
 function openModal(){
+  if(userRole === 'viewer') return;
   editId=null;
   document.getElementById('modalTitle').textContent='New Order';
   document.getElementById('fDate').value=new Date().toISOString().split('T')[0];
@@ -385,11 +591,11 @@ function openModal(){
 }
 
 function editOrder(id){
+  if(userRole === 'viewer') return;
   const o=orders.find(x=>x.id===id);if(!o)return;
   editId=id;
   document.getElementById('modalTitle').textContent='Edit Order';
-  const parts=o.date.split('/');
-  document.getElementById('fDate').value=`${parts[2]}-${String(parts[0]).padStart(2,'0')}-${String(parts[1]).padStart(2,'0')}`;
+  document.getElementById('fDate').value = orderDateToInput(o);
   document.getElementById('fName').value=o.name;
   document.getElementById('fPhone').value=o.phone;
   document.getElementById('fZone').value=o.zone;
@@ -405,7 +611,38 @@ function editOrder(id){
 
 function closeModal(){document.getElementById('modalBg').classList.remove('open')}
 
+async function saveOrderErrorHint(res){
+  if(res.status === 401){
+    showToast('Session expired — please sign in again.', 'error');
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(ROLE_KEY);
+    authToken = null;
+    showLogin();
+    return;
+  }
+  if(res.status === 403){
+    showToast('View-only account cannot save. Use an editor login.', 'error');
+    return;
+  }
+  if(res.status === 429){
+    showToast('Too many requests — wait a minute and try again.', 'error');
+    return;
+  }
+  let msg = res.statusText || 'Request failed';
+  try{
+    const j = await res.json();
+    if(j.error) msg = j.error;
+  } catch(e){}
+  showToast('Could not save: ' + msg, 'error', 6000);
+}
+
 async function saveOrder(){
+  if(userRole === 'viewer'){
+    showToast('View-only — use an editor login to save.', 'error');
+    return;
+  }
+  const saveBtn = document.getElementById('saveOrderBtn');
+  if(saveBtn){ saveBtn.disabled = true; saveBtn.dataset._t = saveBtn.textContent; saveBtn.textContent = 'Saving…'; }
   const d=document.getElementById('fDate').value || new Date().toISOString().split('T')[0];
   const parts=d.split('-');
   const y=parts[0]||new Date().getFullYear();
@@ -428,9 +665,8 @@ async function saveOrder(){
   let success = false;
   if(editId){
     try{
-      const res = await fetch(`/orders/${editId}`, {
+      const res = await apiFetch(`/orders/${editId}`, {
         method: 'PUT',
-        headers: {'Content-Type': 'application/json'},
         body: JSON.stringify(orderData)
       });
       if(res.ok){
@@ -439,19 +675,27 @@ async function saveOrder(){
         orders[idx] = {id: editId, ...orderData};
         serverMode = true;
         startSharedPolling();
+      } else if(authRequired || serverMode){
+        await saveOrderErrorHint(res);
+        if(saveBtn){ saveBtn.disabled = false; saveBtn.textContent = saveBtn.dataset._t || 'Save Order'; }
+        return;
       }
-    } catch(e){}
+    } catch(e){
+      if(authRequired || serverMode){
+        showToast('Network error — could not reach the server.', 'error');
+        if(saveBtn){ saveBtn.disabled = false; saveBtn.textContent = saveBtn.dataset._t || 'Save Order'; }
+        return;
+      }
+    }
     if(!success){
-      // Fallback to localStorage
       const idx = orders.findIndex(o => o.id === editId);
       orders[idx] = {id: editId, ...orderData};
       localStorage.setItem(STORAGE_KEY, JSON.stringify({orders, nextId}));
     }
   } else {
     try{
-      const res = await fetch('/orders', {
+      const res = await apiFetch('/orders', {
         method: 'POST',
-        headers: {'Content-Type': 'application/json'},
         body: JSON.stringify(orderData)
       });
       if(res.ok){
@@ -462,27 +706,39 @@ async function saveOrder(){
         success = true;
         serverMode = true;
         startSharedPolling();
+      } else if(authRequired || serverMode){
+        await saveOrderErrorHint(res);
+        if(saveBtn){ saveBtn.disabled = false; saveBtn.textContent = saveBtn.dataset._t || 'Save Order'; }
+        return;
       }
-    } catch(e){}
+    } catch(e){
+      if(authRequired || serverMode){
+        showToast('Network error — could not reach the server.', 'error');
+        if(saveBtn){ saveBtn.disabled = false; saveBtn.textContent = saveBtn.dataset._t || 'Save Order'; }
+        return;
+      }
+    }
     if(!success){
-      // Fallback to localStorage
       orderData.id = nextId++;
       orders.push(orderData);
       localStorage.setItem(STORAGE_KEY, JSON.stringify({orders, nextId}));
     }
   }
-  page=1; // Reset to first page to show new order
+  if(saveBtn){ saveBtn.disabled = false; saveBtn.textContent = saveBtn.dataset._t || 'Save Order'; }
+  page=1;
   closeModal();
   render();
-  renderReports(); // Always update reports to ensure consistency
-  persistData(); // Show save indicator
+  renderReports();
+  persistData();
+  if(success) showToast(editId ? 'Order updated' : 'Order saved', 'success');
+  else if(!success && !authRequired && !serverMode) showToast('Saved locally (server unreachable)', 'info', 5000);
 }
 
 async function deleteOrder(id){
   if(!confirm('Delete this order?'))return;
   let success = false;
   try{
-    const res = await fetch(`/orders/${id}`, {method: 'DELETE'});
+    const res = await apiFetch(`/orders/${id}`, {method: 'DELETE'});
     if(res.ok){
       success = true;
       orders = orders.filter(o => o.id !== id);
@@ -531,6 +787,10 @@ function exportReportCSV(){
 
 function clearFilters(){
   document.getElementById('search').value='';
+  const df = document.getElementById('filterDateFrom');
+  const dt = document.getElementById('filterDateTo');
+  if(df) df.value = '';
+  if(dt) dt.value = '';
   document.getElementById('filterZone').value='';
   document.getElementById('filterFuel').value='';
   document.getElementById('filterStatus').value='';
@@ -538,30 +798,64 @@ function clearFilters(){
   render();
 }
 
+function escapeHtml(s){
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+async function loadAudit(){
+  const body = document.getElementById('auditBody');
+  if(!body) return;
+  body.innerHTML = '<tr><td colspan="5">Loading…</td></tr>';
+  try{
+    const res = await apiFetch('/api/audit?limit=200');
+    if(!res.ok) throw new Error();
+    const rows = await res.json();
+    body.innerHTML = rows.length ? rows.map(r=>{
+      const ts = r.ts != null ? (typeof r.ts === 'string' ? r.ts : new Date(r.ts).toISOString()) : '';
+      const detail = r.detail != null ? (typeof r.detail === 'object' ? JSON.stringify(r.detail) : String(r.detail)) : '';
+      return `<tr><td>${escapeHtml(ts)}</td><td>${escapeHtml(r.role||'')}</td><td>${escapeHtml(r.action||'')}</td><td>${r.orderId!=null?r.orderId:''}</td><td>${escapeHtml(detail)}</td></tr>`;
+    }).join('') : '<tr><td colspan="5">No entries yet.</td></tr>';
+  } catch(e){
+    body.innerHTML = '<tr><td colspan="5">Could not load audit log.</td></tr>';
+  }
+}
+
 async function resetSystem(){
+  if(userRole === 'viewer') return;
   if(!confirm('Reset system and delete all saved orders?')) return;
   let success = false;
   try{
-    const allOrders = [...orders];
-    for(const o of allOrders){
-      const res = await fetch(`/orders/${o.id}`, {method: 'DELETE'});
-      if(!res.ok) throw new Error();
+    const res = await apiFetch('/api/orders/reset-all', { method: 'POST' });
+    if(res.ok){
+      success = true;
+      orders = [];
+      nextId = 1;
     }
-    success = true;
   } catch(e){}
-  if(success){
-    orders = [];
-    nextId = 1;
-  } else {
-    // Fallback
-    orders = [];
-    nextId = 1;
-    localStorage.removeItem(STORAGE_KEY);
+  if(!success && !authRequired){
+    try{
+      const allOrders = [...orders];
+      for(const o of allOrders){
+        const res = await apiFetch(`/orders/${o.id}`, {method: 'DELETE'});
+        if(!res.ok) throw new Error();
+      }
+      orders = [];
+      nextId = 1;
+      success = true;
+    } catch(e){
+      orders = [];
+      nextId = 1;
+      localStorage.removeItem(STORAGE_KEY);
+    }
+  } else if(!success){
+    showToast('Could not reset orders.', 'error');
+    return;
   }
   populateFilters();
   render();
   renderReports();
+  if(success) showToast('All orders cleared', 'success');
 }
 
 loadTheme();
-loadData();
+boot();

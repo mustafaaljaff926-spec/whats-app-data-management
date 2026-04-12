@@ -1,24 +1,150 @@
 const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
+const compression = require('compression');
+const helmet = require('helmet');
 const fs = require('fs');
 const path = require('path');
+const rateLimit = require('express-rate-limit');
+const jwt = require('jsonwebtoken');
+
+let APP_VERSION = '2.0.0';
+try {
+  APP_VERSION = require('./package.json').version;
+} catch (e) {}
 
 const app = express();
 const port = process.env.PORT || 3000;
 const DATA_FILE = path.join(__dirname, 'orders.json');
+const AUDIT_FILE = path.join(__dirname, 'audit.json');
+const BACKUP_DIR = path.join(__dirname, 'backups');
 
 let mongoCollection = null;
 let mongoClient = null;
+let auditCollection = null;
 
-// Middleware
+const AUTH_SECRET = process.env.AUTH_SECRET || '';
+const EDITOR_PW = process.env.EDITOR_PASSWORD || '';
+const VIEWER_PW = process.env.VIEWER_PASSWORD || '';
+const authEnabled = Boolean(AUTH_SECRET && (EDITOR_PW || VIEWER_PW));
+const TOKEN_EXPIRY = process.env.AUTH_TOKEN_DAYS ? `${process.env.AUTH_TOKEN_DAYS}d` : '7d';
+
+app.set('trust proxy', 1);
+
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false,
+  })
+);
+app.use(compression());
+
+const skipHealth = (req) => req.path === '/health' || req.path === '/api/auth/status';
+
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: parseInt(process.env.RATE_LIMIT_MAX || '300', 10),
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: skipHealth,
+});
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: parseInt(process.env.RATE_LIMIT_LOGIN_MAX || '30', 10),
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 app.use(cors());
-app.use(bodyParser.json());
-app.use(express.static('.')); // Serve static files
+app.use(bodyParser.json({ limit: '2mb' }));
+app.use(apiLimiter);
+
+app.use(express.static('.'));
 
 app.get('/health', (req, res) => {
   res.status(200).send('ok');
 });
+
+app.get('/api/auth/status', (req, res) => {
+  res.json({ authEnabled, version: APP_VERSION });
+});
+
+function parseOrderBody(raw) {
+  return {
+    date: String(raw.date ?? ''),
+    name: String(raw.name ?? ''),
+    phone: String(raw.phone ?? ''),
+    zone: String(raw.zone ?? ''),
+    truck: String(raw.truck ?? ''),
+    rider: raw.rider == null ? '' : String(raw.rider),
+    fuel: String(raw.fuel ?? ''),
+    price: Number(raw.price),
+    liters: Number(raw.liters),
+    status: String(raw.status ?? ''),
+    notes: raw.notes == null ? '' : String(raw.notes),
+  };
+}
+
+function validateOrderBody(o) {
+  if (!o.date || o.date.length > 120) return 'Invalid or missing date';
+  if (o.name.length > 500) return 'Customer name too long';
+  if (o.phone.length > 80) return 'Phone too long';
+  if (!o.zone || o.zone.length > 300) return 'Invalid zone';
+  if (o.truck.length > 40) return 'Invalid truck';
+  if (o.rider.length > 200) return 'Invalid rider';
+  if (!['Muhasan', 'Super'].includes(o.fuel)) return 'Invalid fuel type';
+  if (!['Completed', 'Cancelled', 'Pending'].includes(o.status)) return 'Invalid status';
+  if (!Number.isFinite(o.price) || o.price < 0 || o.price > 1e15) return 'Invalid price';
+  if (!Number.isFinite(o.liters) || o.liters < 0 || o.liters > 1e9) return 'Invalid liters';
+  if (o.notes.length > 5000) return 'Notes too long';
+  return null;
+}
+
+function orderBodyMiddleware(req, res, next) {
+  const o = parseOrderBody(req.body);
+  const err = validateOrderBody(o);
+  if (err) return res.status(400).json({ error: err });
+  req.body = o;
+  next();
+}
+
+app.post('/api/auth/login', loginLimiter, (req, res) => {
+  if (!authEnabled) {
+    return res.status(400).json({ error: 'Authentication is not configured on this server' });
+  }
+  const password = String(req.body.password || '');
+  let role = null;
+  if (EDITOR_PW && password === EDITOR_PW) role = 'editor';
+  else if (VIEWER_PW && password === VIEWER_PW) role = 'viewer';
+  if (!role) {
+    return res.status(401).json({ error: 'Invalid credentials' });
+  }
+  const token = jwt.sign({ role }, AUTH_SECRET, { expiresIn: TOKEN_EXPIRY });
+  res.json({ token, role });
+});
+
+function requireAuth(req, res, next) {
+  if (!authEnabled) return next();
+  const h = req.headers.authorization;
+  if (!h || !h.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  try {
+    req.user = jwt.verify(h.slice(7), AUTH_SECRET);
+    next();
+  } catch {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+}
+
+function requireEditor(req, res, next) {
+  if (!authEnabled) return next();
+  if (req.user.role !== 'editor') {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  next();
+}
 
 function readOrdersFile() {
   try {
@@ -34,9 +160,18 @@ function writeOrdersFile(orders) {
   fs.writeFileSync(DATA_FILE, JSON.stringify(orders, null, 2), 'utf8');
 }
 
-function nextId(orders) {
-  if (!orders.length) return 1;
-  return Math.max(...orders.map((o) => Number(o.id))) + 1;
+function readAuditFile() {
+  try {
+    const raw = fs.readFileSync(AUDIT_FILE, 'utf8');
+    const data = JSON.parse(raw);
+    return Array.isArray(data) ? data : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeAuditFile(entries) {
+  fs.writeFileSync(AUDIT_FILE, JSON.stringify(entries, null, 2), 'utf8');
 }
 
 function stripMongoId(doc) {
@@ -51,8 +186,11 @@ async function initMongo() {
   const { MongoClient } = require('mongodb');
   mongoClient = new MongoClient(uri);
   await mongoClient.connect();
-  mongoCollection = mongoClient.db(process.env.MONGODB_DB || 'fuel_app').collection('orders');
+  const dbName = process.env.MONGODB_DB || 'fuel_app';
+  mongoCollection = mongoClient.db(dbName).collection('orders');
+  auditCollection = mongoClient.db(dbName).collection('audit_log');
   await mongoCollection.createIndex({ id: 1 }, { unique: true });
+  await auditCollection.createIndex({ ts: -1 });
   console.log('Using MongoDB for order storage (online)');
 }
 
@@ -64,8 +202,80 @@ async function getOrdersList() {
   return readOrdersFile();
 }
 
-// Routes
-app.get('/orders', async (req, res) => {
+function nextId(orders) {
+  if (!orders.length) return 1;
+  return Math.max(...orders.map((o) => Number(o.id))) + 1;
+}
+
+async function appendAudit(entry) {
+  const row = {
+    ts: new Date(),
+    actor: entry.actor,
+    role: entry.role,
+    action: entry.action,
+    orderId: entry.orderId != null ? entry.orderId : undefined,
+    detail: entry.detail,
+  };
+  if (auditCollection) {
+    await auditCollection.insertOne(row);
+  } else {
+    const forFile = { ...row, ts: row.ts.toISOString() };
+    const list = readAuditFile();
+    list.push(forFile);
+    const max = parseInt(process.env.AUDIT_MAX_ENTRIES || '2000', 10);
+    while (list.length > max) list.shift();
+    writeAuditFile(list);
+  }
+}
+
+function actorLabel(req) {
+  if (!authEnabled) return 'anonymous';
+  return req.user.role;
+}
+
+function buildCsvRows(orders) {
+  const header = 'Date,Customer,Phone,Zone,Truck,Rider,Fuel,Price,Liters,Status,Notes';
+  const rows = orders.map((o) =>
+    [
+      o.date,
+      `"${String(o.name || '').replace(/"/g, '""')}"`,
+      o.phone,
+      `"${String(o.zone || '').replace(/"/g, '""')}"`,
+      o.truck,
+      `"${String(o.rider || '').replace(/"/g, '""')}"`,
+      o.fuel,
+      o.price,
+      o.liters,
+      o.status,
+      `"${String(o.notes || '').replace(/"/g, '""')}"`,
+    ].join(',')
+  );
+  return `${header}\n${rows.join('\n')}`;
+}
+
+async function runScheduledBackup() {
+  const list = await getOrdersList();
+  const csv = buildCsvRows(list);
+  fs.mkdirSync(BACKUP_DIR, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const filePath = path.join(BACKUP_DIR, `orders-${stamp}.csv`);
+  fs.writeFileSync(filePath, csv, 'utf8');
+  console.log(`Backup written: ${filePath}`);
+  const keep = parseInt(process.env.BACKUP_KEEP_COUNT || '14', 10);
+  const files = fs
+    .readdirSync(BACKUP_DIR)
+    .filter((f) => f.startsWith('orders-') && f.endsWith('.csv'))
+    .map((f) => ({
+      f,
+      t: fs.statSync(path.join(BACKUP_DIR, f)).mtimeMs,
+    }))
+    .sort((a, b) => b.t - a.t);
+  for (let i = keep; i < files.length; i++) {
+    fs.unlinkSync(path.join(BACKUP_DIR, files[i].f));
+  }
+}
+
+app.get('/orders', requireAuth, async (req, res) => {
   try {
     const list = await getOrdersList();
     res.json(list.sort((a, b) => Number(b.id) - Number(a.id)));
@@ -74,7 +284,7 @@ app.get('/orders', async (req, res) => {
   }
 });
 
-app.post('/orders', async (req, res) => {
+app.post('/orders', requireAuth, requireEditor, orderBodyMiddleware, async (req, res) => {
   try {
     const { date, name, phone, zone, truck, rider, fuel, price, liters, status, notes } = req.body;
     let id;
@@ -114,13 +324,19 @@ app.post('/orders', async (req, res) => {
       });
       writeOrdersFile(orders);
     }
+    await appendAudit({
+      actor: actorLabel(req),
+      role: req.user?.role || 'editor',
+      action: 'ORDER_CREATE',
+      orderId: id,
+    });
     res.json({ id });
   } catch (e) {
     res.status(500).json({ error: String(e.message || e) });
   }
 });
 
-app.put('/orders/:id', async (req, res) => {
+app.put('/orders/:id', requireAuth, requireEditor, orderBodyMiddleware, async (req, res) => {
   try {
     const id = Number(req.params.id);
     const { date, name, phone, zone, truck, rider, fuel, price, liters, status, notes } = req.body;
@@ -167,13 +383,19 @@ app.put('/orders/:id', async (req, res) => {
       };
       writeOrdersFile(orders);
     }
+    await appendAudit({
+      actor: actorLabel(req),
+      role: req.user?.role || 'editor',
+      action: 'ORDER_UPDATE',
+      orderId: id,
+    });
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: String(e.message || e) });
   }
 });
 
-app.delete('/orders/:id', async (req, res) => {
+app.delete('/orders/:id', requireAuth, requireEditor, async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (mongoCollection) {
@@ -182,7 +404,67 @@ app.delete('/orders/:id', async (req, res) => {
       const orders = readOrdersFile().filter((o) => Number(o.id) !== id);
       writeOrdersFile(orders);
     }
+    await appendAudit({
+      actor: actorLabel(req),
+      role: req.user?.role || 'editor',
+      action: 'ORDER_DELETE',
+      orderId: id,
+    });
     res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
+app.post('/api/orders/reset-all', requireAuth, requireEditor, async (req, res) => {
+  try {
+    const list = await getOrdersList();
+    if (mongoCollection) {
+      await mongoCollection.deleteMany({});
+    } else {
+      writeOrdersFile([]);
+    }
+    await appendAudit({
+      actor: actorLabel(req),
+      role: req.user?.role || 'editor',
+      action: 'RESET_ALL',
+      detail: { deletedCount: list.length },
+    });
+    res.json({ success: true, deletedCount: list.length });
+  } catch (e) {
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
+app.post('/api/audit/event', requireAuth, requireEditor, async (req, res) => {
+  try {
+    const { action, orderId, detail } = req.body;
+    if (!action || typeof action !== 'string') {
+      return res.status(400).json({ error: 'action required' });
+    }
+    await appendAudit({
+      actor: actorLabel(req),
+      role: req.user?.role || 'editor',
+      action,
+      orderId: orderId != null ? Number(orderId) : undefined,
+      detail,
+    });
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
+app.get('/api/audit', requireAuth, requireEditor, async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit || '100', 10), 500);
+    if (auditCollection) {
+      const rows = await auditCollection.find({}).sort({ ts: -1 }).limit(limit).toArray();
+      res.json(rows.map((doc) => stripMongoId(doc)));
+    } else {
+      const list = readAuditFile();
+      res.json(list.slice(-limit).reverse());
+    }
   } catch (e) {
     res.status(500).json({ error: String(e.message || e) });
   }
@@ -192,9 +474,23 @@ const host = process.env.HOST || '0.0.0.0';
 
 initMongo()
   .then(() => {
+    const hours = process.env.BACKUP_INTERVAL_HOURS;
+    if (hours) {
+      const ms = parseFloat(hours) * 3600000;
+      if (ms >= 60000) {
+        setInterval(() => {
+          runScheduledBackup().catch((err) => console.error('Backup failed', err));
+        }, ms);
+        if (process.env.BACKUP_ON_START === '1') {
+          runScheduledBackup().catch((err) => console.error('Backup failed', err));
+        }
+        console.log(`Scheduled CSV backup every ${hours} hour(s) → ${BACKUP_DIR}`);
+      }
+    }
     app.listen(port, host, () => {
       const backend = mongoCollection ? 'MongoDB' : `file (${path.basename(DATA_FILE)})`;
-      console.log(`Server on port ${port} — storage: ${backend}`);
+      const authMsg = authEnabled ? 'auth: on' : 'auth: off';
+      console.log(`Server on port ${port} — storage: ${backend}; ${authMsg}`);
     });
   })
   .catch((err) => {
