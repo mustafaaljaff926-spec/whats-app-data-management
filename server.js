@@ -10,6 +10,12 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 
+try {
+  require('dotenv').config();
+} catch (e) {
+  /* dotenv optional until npm install */
+}
+
 let APP_VERSION = '2.0.0';
 try {
   APP_VERSION = require('./package.json').version;
@@ -502,7 +508,34 @@ function readOrdersFile() {
   }
 }
 
+const ORDER_SNAPSHOT_KEEP = Math.max(5, parseInt(process.env.ORDER_SNAPSHOT_KEEP || '48', 10));
+const ORDER_SNAPSHOTS_OFF = process.env.DISABLE_ORDER_SNAPSHOTS === '1';
+
+function snapshotOrdersFileBeforeWrite() {
+  if (ORDER_SNAPSHOTS_OFF || mongoCollection) return;
+  try {
+    if (!fs.existsSync(DATA_FILE)) return;
+    const st = fs.statSync(DATA_FILE);
+    if (!st.isFile() || st.size < 3) return;
+    fs.mkdirSync(BACKUP_DIR, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const dest = path.join(BACKUP_DIR, `orders-snapshot-${stamp}.json`);
+    fs.copyFileSync(DATA_FILE, dest);
+    const files = fs
+      .readdirSync(BACKUP_DIR)
+      .filter((f) => f.startsWith('orders-snapshot-') && f.endsWith('.json'))
+      .map((f) => ({ f, t: fs.statSync(path.join(BACKUP_DIR, f)).mtimeMs }))
+      .sort((a, b) => b.t - a.t);
+    for (let i = ORDER_SNAPSHOT_KEEP; i < files.length; i++) {
+      fs.unlinkSync(path.join(BACKUP_DIR, files[i].f));
+    }
+  } catch (e) {
+    console.error('orders snapshot:', e.message || e);
+  }
+}
+
 function writeOrdersFile(orders) {
+  snapshotOrdersFileBeforeWrite();
   fs.writeFileSync(DATA_FILE, JSON.stringify(orders, null, 2), 'utf8');
 }
 

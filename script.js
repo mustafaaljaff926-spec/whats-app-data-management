@@ -432,6 +432,75 @@ function applyServerOrders(list){
   localStorage.setItem(STORAGE_KEY, JSON.stringify({orders, nextId}));
 }
 
+/** If server has zero orders but this browser still has a local copy, offer to upload (editors only). */
+async function tryRestoreLocalOrdersToServer(){
+  const saved = localStorage.getItem(STORAGE_KEY);
+  if(!saved) return false;
+  let data;
+  try {
+    data = JSON.parse(saved);
+  } catch (e) {
+    return false;
+  }
+  const localOrders = Array.isArray(data.orders) ? data.orders : [];
+  if(localOrders.length === 0) return false;
+  if(userRole !== 'editor'){
+    showToast(
+      'This browser has ' + localOrders.length + ' orders saved offline, but only an editor can upload them to the server. Use another editor session or export CSV.',
+      'info',
+      9000
+    );
+    return false;
+  }
+  if(!window.confirm(
+    'The server has no orders, but this browser has ' + localOrders.length + ' in a local backup (e.g. from before the server file was replaced).\n\nUpload them to the server now?'
+  )){
+    return false;
+  }
+  let ok = 0;
+  for(const o of localOrders){
+    const body = {
+      date: String(o.date ?? ''),
+      name: String(o.name ?? ''),
+      phone: String(o.phone ?? ''),
+      zone: String(o.zone ?? ''),
+      truck: String(o.truck ?? ''),
+      rider: o.rider == null ? '' : String(o.rider),
+      fuel: String(o.fuel ?? 'Muhasan'),
+      price: Number(o.price),
+      liters: Number(o.liters),
+      status: String(o.status ?? 'Completed'),
+      notes: o.notes == null ? '' : String(o.notes),
+    };
+    if(!['Muhasan', 'Super'].includes(body.fuel)) body.fuel = 'Muhasan';
+    if(!['Completed', 'Cancelled', 'Pending'].includes(body.status)) body.status = 'Completed';
+    try{
+      const res = await apiFetch('/orders', {
+        method: 'POST',
+        headers: { 'X-Skip-Order-Notify': '1' },
+        body: JSON.stringify(body),
+      });
+      if(res.ok) ok++;
+    } catch (e) {}
+  }
+  showToast(
+    'Uploaded ' + ok + ' of ' + localOrders.length + ' orders from this browser.',
+    ok === localOrders.length ? 'success' : 'error',
+    6000
+  );
+  if(ok === 0) return false;
+  const res2 = await apiFetch('/orders');
+  if(!res2.ok) return false;
+  applyServerOrders(await res2.json());
+  populateFilters();
+  render();
+  if(currentTab === 'reports'){
+    renderReports();
+    loadDailyReport();
+  }
+  return true;
+}
+
 function startSharedPolling(){
   if(pollTimer || !serverMode) return;
   pollTimer = setInterval(refreshOrdersFromServer, POLL_MS);
@@ -461,7 +530,14 @@ async function loadDataCore(){
     if(res.status === 401) return false;
     if(res.ok){
       serverMode = true;
-      applyServerOrders(await res.json());
+      const list = await res.json();
+      const arr = Array.isArray(list) ? list : [];
+      if(arr.length === 0){
+        const restored = await tryRestoreLocalOrdersToServer();
+        if(!restored) applyServerOrders(arr);
+      } else {
+        applyServerOrders(arr);
+      }
     } else {
       throw new Error();
     }
