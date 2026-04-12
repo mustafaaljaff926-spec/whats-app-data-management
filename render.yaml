@@ -1,0 +1,16 @@
+# Render.com — https://render.com
+# 1. Push this project to GitHub.
+# 2. New → Blueprint → connect repo (or Web Service with root directory this folder).
+# 3. Add environment variable MONGODB_URI (see DEPLOY.md).
+services:
+  - type: web
+    name: fuel-order-management
+    runtime: node
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: MONGODB_URI
+        sync: false
